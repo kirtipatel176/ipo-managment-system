@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, TrendingUp, FileCheck, ArrowLeftRight, Landmark, Users, Briefcase, ChartNoAxesCombined, Settings, ChevronLeft, ChevronRight, CreditCard, BarChart2, CalendarDays, Activity } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, FileCheck, ArrowLeftRight, Landmark, Users, Briefcase, ChartNoAxesCombined, Settings, ChevronLeft, ChevronRight, CreditCard, BarChart2, CalendarDays, Activity, PieChart } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { motion } from 'framer-motion';
 import { useAuth } from '../../contexts/AuthContext';
@@ -16,8 +16,7 @@ const navItems = [
   { path: '/people', label: 'People', icon: <Users size={20} /> },
   { path: '/holdings', label: 'Holdings', icon: <Briefcase size={20} /> },
   { path: '/profit', label: 'P&L', icon: <ChartNoAxesCombined size={20} /> },
-  { path: '/analytics/monthly', label: 'Monthly Analytics', icon: <CalendarDays size={20} /> },
-  { path: '/analytics/yearly', label: 'Yearly Analytics', icon: <BarChart2 size={20} /> },
+  { path: '/analytics', label: 'Analytics', icon: <PieChart size={20} /> },
   { path: '/logs', label: 'System Logs', icon: <Activity size={20} /> },
   { path: '/health', label: 'System Health', icon: <Activity size={20} /> },
 ];
