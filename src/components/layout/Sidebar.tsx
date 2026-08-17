@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, TrendingUp, FileCheck, ArrowLeftRight, Landmark, Users, Briefcase, ChartNoAxesCombined, Settings, ChevronLeft, ChevronRight, CreditCard, BarChart2, CalendarDays, Activity, PieChart } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, FileCheck, ArrowLeftRight, Landmark, Users, Briefcase, ChartNoAxesCombined, Settings, ChevronLeft, ChevronRight, CreditCard, Activity, PieChart } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { motion } from 'framer-motion';
 import { useAuth } from '../../contexts/AuthContext';

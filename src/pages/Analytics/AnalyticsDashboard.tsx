@@ -3,14 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
 import { mapTransaction, mapApplication } from '../../lib/mappers';
 import { Card } from '../../components/ui/Card';
-import { BlurOverlay } from '../../components/ui/BlurOverlay';
-import { Badge } from '../../components/ui/Badge';
 import { 
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, 
-  PieChart, Pie, Cell, AreaChart, Area
+  BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, 
+  PieChart, Pie, Cell
 } from 'recharts';
-import { Calendar, Filter, PieChart as PieIcon, TrendingUp, TrendingDown, Target, Activity, DollarSign, RefreshCcw } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { Filter, PieChart as PieIcon, TrendingUp, Target, Activity, DollarSign, RefreshCcw } from 'lucide-react';
 
 export const AnalyticsDashboard: React.FC = () => {
   const [timeframe, setTimeframe] = useState<'ALL' | 'YTD' | 'CUSTOM'>('YTD');
@@ -36,7 +33,12 @@ export const AnalyticsDashboard: React.FC = () => {
         applicant_person:applicant_person_id (full_name),
         demat:demat_account_id (broker_name, demat_id)
       `);
-      return (data || []).map(mapApplication);
+      return (data || []).map((d: any) => ({
+        ...mapApplication(d),
+        demat: d.demat,
+        ipo: d.ipo,
+        applicantPerson: d.applicant_person
+      }));
     }
   });
 
@@ -163,7 +165,7 @@ export const AnalyticsDashboard: React.FC = () => {
     const brokerMap: Record<string, { applied: number, allotted: number }> = {};
     
     filteredApps.forEach(a => {
-      const broker = a.demat?.brokerName || 'Unknown';
+      const broker = (a as any).demat?.broker_name || 'Unknown';
       if (!brokerMap[broker]) brokerMap[broker] = { applied: 0, allotted: 0 };
       
       brokerMap[broker].applied++;
@@ -318,7 +320,7 @@ export const AnalyticsDashboard: React.FC = () => {
                 <Tooltip 
                   cursor={{ fill: '#00000005' }}
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                  formatter={(value: any, name: string) => {
+                  formatter={(value: any, name: any) => {
                     if (name === 'Applications') return [value, name];
                     return [formatCurrency(value), name];
                   }}
