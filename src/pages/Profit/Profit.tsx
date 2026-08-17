@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../../db/schema';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '../../lib/supabase';
+import { mapSale, mapIpo, mapPerson } from '../../lib/mappers';
 import { Card } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';
 import { TrendingUp, TrendingDown, DollarSign, ArrowUpRight, ArrowDownRight, Filter, Search, Receipt } from 'lucide-react';
@@ -8,39 +9,61 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { motion } from 'framer-motion';
 import { Pagination } from '../../components/ui/Pagination';
+import { useAuth } from '../../contexts/AuthContext';
+import { BlurOverlay } from '../../components/ui/BlurOverlay';
 
 export const Profit: React.FC = () => {
+  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 12;
-  const salesData = useLiveQuery(async () => {
-    const sales = await db.sales.toArray();
-    const result = [];
-    
-    for (const sale of sales) {
-      const holding = await db.holdings.get(sale.holdingId);
-      let ipoName = 'Unknown IPO';
-      let personName = 'Unknown Person';
-      let symbol = 'N/A';
-      
-      if (holding) {
-        const ipo = await db.ipos.get(holding.ipoId);
-        const person = await db.people.get(holding.personId);
-        ipoName = ipo?.ipoName || ipoName;
-        symbol = ipo?.symbol || symbol;
-        personName = person?.fullName || personName;
-      }
-      
-      result.push({
-        ...sale,
-        ipoName,
-        symbol,
-        personName,
+
+  const { data: salesData, isLoading } = useQuery({
+    queryKey: ['salesData'],
+    queryFn: async () => {
+      const [
+        { data: sData },
+        { data: iData },
+        { data: pData }
+      ] = await Promise.all([
+        supabase.from('sales').select('*').order('date', { ascending: false }),
+        supabase.from('ipos').select('*'),
+        supabase.from('people').select('*')
+      ]);
+
+      const sales = (sData || []).map(mapSale);
+      const ipos = (iData || []).map(mapIpo);
+      const people = (pData || []).map(mapPerson);
+
+      return sales.map(sale => {
+        let ipoName = 'Unknown IPO';
+        let personName = 'Unknown Person';
+        let symbol = 'N/A';
+        
+        if (sale.ipoId) {
+          const ipo = ipos.find(i => i.id === sale.ipoId);
+          if (ipo) {
+            ipoName = ipo.ipoName;
+            symbol = ipo.symbol;
+          }
+        }
+        
+        if (sale.personId) {
+          const person = people.find(p => p.id === sale.personId);
+          if (person) {
+            personName = person.fullName;
+          }
+        }
+        
+        return {
+          ...sale,
+          ipoName,
+          symbol,
+          personName,
+        };
       });
     }
-    
-    return result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, []);
+  });
 
   const filteredSales = salesData?.filter(sale => {
     if (!searchTerm) return true;
@@ -71,6 +94,14 @@ export const Profit: React.FC = () => {
   const totalCharges = salesData?.reduce((acc, curr) => acc + curr.charges, 0) || 0;
   const netProfit = totalRealizedProfit - totalCharges;
 
+  if (isLoading) {
+    return (
+      <div className="flex h-full w-full items-center justify-center py-20">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent-blue/20 border-t-accent-blue" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8 pb-10">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -79,7 +110,7 @@ export const Profit: React.FC = () => {
           <p className="mt-1 text-text-secondary">Review your realized gains and losses from sold holdings.</p>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" icon={<Receipt size={16} />}>Download Tax Report</Button>
+          <Button variant="outline" icon={<Receipt size={16} />} disabled={!user}>Download Tax Report</Button>
         </div>
       </div>
 
@@ -88,18 +119,22 @@ export const Profit: React.FC = () => {
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
             Gross Realized P&L
           </div>
-          <div className={`text-3xl font-bold tracking-tight ${totalRealizedProfit >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
-            {totalRealizedProfit >= 0 ? '+' : ''}{formatCurrency(totalRealizedProfit)}
-          </div>
+          <BlurOverlay blurLevel="blur-md">
+            <div className={`text-3xl font-bold tracking-tight ${totalRealizedProfit >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
+              {totalRealizedProfit >= 0 ? '+' : ''}{formatCurrency(totalRealizedProfit)}
+            </div>
+          </BlurOverlay>
         </Card>
 
         <Card className="flex flex-col justify-center border-black/5 shadow-sm">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
             Total Charges
           </div>
-          <div className="text-3xl font-bold tracking-tight text-accent-orange">
-            -{formatCurrency(totalCharges)}
-          </div>
+          <BlurOverlay blurLevel="blur-md">
+            <div className="text-3xl font-bold tracking-tight text-accent-orange">
+              -{formatCurrency(totalCharges)}
+            </div>
+          </BlurOverlay>
         </Card>
 
         <Card className={`flex flex-col justify-center border-black/5 shadow-sm relative overflow-hidden ${netProfit >= 0 ? 'bg-accent-green/5' : 'bg-accent-red/5'}`}>
@@ -107,10 +142,12 @@ export const Profit: React.FC = () => {
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
             Net Realized P&L
           </div>
-          <div className={`flex items-end gap-3 text-3xl font-bold tracking-tight relative z-10 ${netProfit >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
-            {netProfit >= 0 ? '+' : ''}{formatCurrency(netProfit)}
-            {netProfit >= 0 ? <TrendingUp size={24} className="mb-1 opacity-50" /> : <TrendingDown size={24} className="mb-1 opacity-50" />}
-          </div>
+          <BlurOverlay blurLevel="blur-md">
+            <div className={`flex items-end gap-3 text-3xl font-bold tracking-tight relative z-10 ${netProfit >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
+              {netProfit >= 0 ? '+' : ''}{formatCurrency(netProfit)}
+              {netProfit >= 0 ? <TrendingUp size={24} className="mb-1 opacity-50" /> : <TrendingDown size={24} className="mb-1 opacity-50" />}
+            </div>
+          </BlurOverlay>
         </Card>
       </div>
 
@@ -164,26 +201,36 @@ export const Profit: React.FC = () => {
                       </div>
                       <Badge variant={isProfit ? 'success' : 'danger'} className="shrink-0 flex items-center gap-1 font-semibold text-sm">
                         {isProfit ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-                        {formatCurrency(Math.abs(sale.realizedPnL))}
+                        <BlurOverlay blurLevel="blur-sm">
+                          <span>{formatCurrency(Math.abs(sale.realizedPnL))}</span>
+                        </BlurOverlay>
                       </Badge>
                     </div>
 
                     <div className="grid grid-cols-2 gap-y-4 gap-x-2 mb-4 flex-1 bg-bg-secondary/30 rounded-xl p-3">
                       <div>
                         <p className="text-xs font-medium text-text-tertiary mb-0.5">Shares Sold</p>
-                        <p className="text-sm font-semibold text-text-primary">{sale.sharesSold}</p>
+                        <BlurOverlay blurLevel="blur-sm">
+                          <p className="text-sm font-semibold text-text-primary">{sale.sharesSold}</p>
+                        </BlurOverlay>
                       </div>
                       <div>
                         <p className="text-xs font-medium text-text-tertiary mb-0.5">Sell Price</p>
-                        <p className="text-sm font-semibold text-text-primary">{formatCurrency(sale.sellPrice)}</p>
+                        <BlurOverlay blurLevel="blur-sm">
+                          <p className="text-sm font-semibold text-text-primary">{formatCurrency(sale.sellPrice)}</p>
+                        </BlurOverlay>
                       </div>
                       <div>
                         <p className="text-xs font-medium text-text-tertiary mb-0.5">Sale Value</p>
-                        <p className="text-sm font-semibold text-text-primary">{formatCurrency(sale.sharesSold * sale.sellPrice)}</p>
+                        <BlurOverlay blurLevel="blur-sm">
+                          <p className="text-sm font-semibold text-text-primary">{formatCurrency(sale.sharesSold * sale.sellPrice)}</p>
+                        </BlurOverlay>
                       </div>
                       <div>
                         <p className="text-xs font-medium text-text-tertiary mb-0.5">Charges</p>
-                        <p className="text-sm font-semibold text-accent-orange">{formatCurrency(sale.charges)}</p>
+                        <BlurOverlay blurLevel="blur-sm">
+                          <p className="text-sm font-semibold text-accent-orange">{formatCurrency(sale.charges)}</p>
+                        </BlurOverlay>
                       </div>
                     </div>
                   </Card>

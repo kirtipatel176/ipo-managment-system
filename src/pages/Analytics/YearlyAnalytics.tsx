@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../../db/schema';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '../../lib/supabase';
+import { mapTransaction, mapApplication } from '../../lib/mappers';
 import { Card } from '../../components/ui/Card';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Calendar, TrendingUp } from 'lucide-react';
@@ -8,8 +9,21 @@ import { Calendar, TrendingUp } from 'lucide-react';
 export const YearlyAnalytics: React.FC = () => {
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
-  const txs = useLiveQuery(() => db.transactions.toArray(), []) || [];
-  const apps = useLiveQuery(() => db.applications.toArray(), []) || [];
+  const { data: txs = [] } = useQuery({
+    queryKey: ['transactions'],
+    queryFn: async () => {
+      const { data } = await supabase.from('transactions').select('*');
+      return (data || []).map(mapTransaction);
+    }
+  });
+
+  const { data: apps = [] } = useQuery({
+    queryKey: ['applications'],
+    queryFn: async () => {
+      const { data } = await supabase.from('applications').select('*');
+      return (data || []).map(mapApplication);
+    }
+  });
 
   const formatCurrency = (val: number = 0) =>
     new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(val);
@@ -45,7 +59,6 @@ export const YearlyAnalytics: React.FC = () => {
     };
   }, [txs, apps, selectedYear]);
 
-  // Generate chart data (by month)
   const chartData = useMemo(() => {
     const data = [];
     for (let i = 1; i <= 12; i++) {
@@ -154,7 +167,7 @@ export const YearlyAnalytics: React.FC = () => {
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#00000010" />
               <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#666' }} />
               <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#666' }} tickFormatter={v => '₹' + (v/1000) + 'k'} />
-              <Tooltip formatter={(value: number) => formatCurrency(value)} cursor={{ fill: '#00000005' }} />
+              <Tooltip formatter={(value: any) => formatCurrency(value)} cursor={{ fill: '#00000005' }} />
               <Legend />
               <Bar dataKey="sent" name="Money Sent" fill="#ef4444" radius={[4, 4, 0, 0]} />
               <Bar dataKey="received" name="Money Received" fill="#22c55e" radius={[4, 4, 0, 0]} />

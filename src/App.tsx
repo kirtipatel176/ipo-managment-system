@@ -1,4 +1,4 @@
-
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/layout/Layout';
 
@@ -20,32 +20,55 @@ import { DematAccounts } from './pages/DematAccounts/DematAccounts';
 import { MonthlyAnalytics } from './pages/Analytics/MonthlyAnalytics';
 import { YearlyAnalytics } from './pages/Analytics/YearlyAnalytics';
 import { IPOFilterProvider } from './hooks/useIPOFilter';
+import { ToastProvider } from './hooks/useToast';
+import { ToastContainer } from './components/ui/Toast';
+import { Health } from './pages/Health/Health';
+import { Login } from './pages/Login/Login';
+import { Logs } from './pages/Logs/Logs';
+import { AuthProvider } from './contexts/AuthContext';
 
-// Placeholder Pages
-const Settings = () => <div><h2>Settings</h2></div>;
+import { Settings } from './pages/Settings/Settings';
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 function App() {
   return (
-    <IPOFilterProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Layout />}>
-            <Route index element={<Dashboard />} />
-            <Route path="ipos" element={<IPOMaster />} />
-            <Route path="applications" element={<Applications />} />
-            <Route path="transactions" element={<Transactions />} />
-            <Route path="accounts" element={<Accounts />} />
-            <Route path="demat" element={<DematAccounts />} />
-            <Route path="people" element={<People />} />
-            <Route path="holdings" element={<Holdings />} />
-            <Route path="profit" element={<Profit />} />
-            <Route path="analytics/monthly" element={<MonthlyAnalytics />} />
-            <Route path="analytics/yearly" element={<YearlyAnalytics />} />
-            <Route path="settings" element={<Settings />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </IPOFilterProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <ToastProvider>
+        <IPOFilterProvider>
+          <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<Layout />}>
+              <Route index element={<Dashboard />} />
+              <Route path="ipos" element={<IPOMaster />} />
+              <Route path="applications" element={<Applications />} />
+              <Route path="transactions" element={<Transactions />} />
+              <Route path="accounts" element={<Accounts />} />
+              <Route path="demat" element={<DematAccounts />} />
+              <Route path="people" element={<People />} />
+              <Route path="holdings" element={<Holdings />} />
+              <Route path="profit" element={<Profit />} />
+              <Route path="analytics/monthly" element={<MonthlyAnalytics />} />
+              <Route path="analytics/yearly" element={<YearlyAnalytics />} />
+              <Route path="health" element={<Health />} />
+              <Route path="logs" element={<Logs />} />
+              <Route path="settings" element={<Settings />} />
+            </Route>
+            <Route path="/login" element={<Login />} />
+          </Routes>
+          {/* Global toast overlay — renders on top of all pages */}
+          <ToastContainer />
+        </BrowserRouter>
+        </IPOFilterProvider>
+        </ToastProvider>
+      </AuthProvider>
+    </QueryClientProvider>
   );
 }
 

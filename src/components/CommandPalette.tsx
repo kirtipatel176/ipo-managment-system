@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, User, Landmark, Briefcase, FileText, ArrowRight } from 'lucide-react';
-import { db } from '../db/schema';
+import { supabase } from '../lib/supabase';
 
 type SearchResultType = 'person' | 'bank' | 'demat' | 'ipo' | 'transaction' | 'application';
 
@@ -21,7 +21,6 @@ export const CommandPalette: React.FC = () => {
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Toggle on Cmd+K or Ctrl+K
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -52,7 +51,6 @@ export const CommandPalette: React.FC = () => {
     }
   }, [isOpen]);
 
-  // Search logic
   useEffect(() => {
     if (!query.trim()) {
       setResults([]);
@@ -63,32 +61,41 @@ export const CommandPalette: React.FC = () => {
     const fetchResults = async () => {
       const allResults: SearchResult[] = [];
       
-      // 1. People
-      const people = await db.people.toArray();
-      people.filter(p => p.fullName.toLowerCase().includes(q) || p.notes?.toLowerCase().includes(q))
-            .forEach(p => allResults.push({ id: `person-${p.id}`, type: 'person', title: p.fullName, subtitle: p.mobile || 'Person', link: '/people' }));
+      const [
+        { data: people },
+        { data: banks },
+        { data: demats },
+        { data: ipos },
+        { data: txs }
+      ] = await Promise.all([
+        supabase.from('people').select('id, full_name, mobile, notes'),
+        supabase.from('bank_accounts').select('id, bank_name, account_name'),
+        supabase.from('demat_accounts').select('id, broker_name, demat_id'),
+        supabase.from('ipos').select('id, ipo_name, company_name, status'),
+        supabase.from('transactions').select('id, amount, utr, transaction_type, notes')
+      ]);
 
-      // 2. Banks
-      const banks = await db.bankAccounts.toArray();
-      banks.filter(b => b.bankName.toLowerCase().includes(q) || b.accountName.toLowerCase().includes(q))
-           .forEach(b => allResults.push({ id: `bank-${b.id}`, type: 'bank', title: `${b.bankName} - ${b.accountName}`, subtitle: 'Bank Account', link: '/accounts' }));
+      (people || [])
+        .filter(p => p.full_name?.toLowerCase().includes(q) || p.notes?.toLowerCase().includes(q))
+        .forEach(p => allResults.push({ id: `person-${p.id}`, type: 'person', title: p.full_name || '', subtitle: p.mobile || 'Person', link: '/people' }));
 
-      // 3. Demats
-      const demats = await db.dematAccounts.toArray();
-      demats.filter(d => d.brokerName.toLowerCase().includes(q) || d.dematId?.toLowerCase().includes(q))
-            .forEach(d => allResults.push({ id: `demat-${d.id}`, type: 'demat', title: d.brokerName, subtitle: `Demat - ${d.dematId || 'Unknown ID'}`, link: '/demat' }));
+      (banks || [])
+        .filter(b => b.bank_name?.toLowerCase().includes(q) || b.account_name?.toLowerCase().includes(q))
+        .forEach(b => allResults.push({ id: `bank-${b.id}`, type: 'bank', title: `${b.bank_name} - ${b.account_name}`, subtitle: 'Bank Account', link: '/accounts' }));
 
-      // 4. IPOs
-      const ipos = await db.ipos.toArray();
-      ipos.filter(i => i.ipoName.toLowerCase().includes(q) || i.companyName.toLowerCase().includes(q))
-          .forEach(i => allResults.push({ id: `ipo-${i.id}`, type: 'ipo', title: i.ipoName, subtitle: `${i.companyName} (${i.status})`, link: '/ipos' }));
+      (demats || [])
+        .filter(d => d.broker_name?.toLowerCase().includes(q) || d.demat_id?.toLowerCase().includes(q))
+        .forEach(d => allResults.push({ id: `demat-${d.id}`, type: 'demat', title: d.broker_name || '', subtitle: `Demat - ${d.demat_id || 'Unknown ID'}`, link: '/demat' }));
 
-      // 5. Transactions
-      const txs = await db.transactions.toArray();
-      txs.filter(t => t.utr?.toLowerCase().includes(q) || t.notes?.toLowerCase().includes(q) || t.amount.toString().includes(q))
-         .forEach(t => allResults.push({ id: `tx-${t.id}`, type: 'transaction', title: `₹${t.amount.toLocaleString('en-IN')}`, subtitle: `UTR: ${t.utr || 'N/A'} - ${t.transactionType}`, link: '/transactions' }));
+      (ipos || [])
+        .filter(i => i.ipo_name?.toLowerCase().includes(q) || i.company_name?.toLowerCase().includes(q))
+        .forEach(i => allResults.push({ id: `ipo-${i.id}`, type: 'ipo', title: i.ipo_name || '', subtitle: `${i.company_name} (${i.status})`, link: '/ipos' }));
 
-      setResults(allResults.slice(0, 15)); // limit to top 15
+      (txs || [])
+        .filter(t => t.utr?.toLowerCase().includes(q) || t.notes?.toLowerCase().includes(q) || t.amount?.toString().includes(q))
+        .forEach(t => allResults.push({ id: `tx-${t.id}`, type: 'transaction', title: `₹${(t.amount || 0).toLocaleString('en-IN')}`, subtitle: `UTR: ${t.utr || 'N/A'} - ${t.transaction_type}`, link: '/transactions' }));
+
+      setResults(allResults.slice(0, 15));
     };
     
     fetchResults();

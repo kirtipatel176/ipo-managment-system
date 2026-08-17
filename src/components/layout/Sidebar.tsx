@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, TrendingUp, FileCheck, ArrowLeftRight, Landmark, Users, Briefcase, ChartNoAxesCombined, Settings, ChevronLeft, ChevronRight, CreditCard, BarChart2, CalendarDays } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, FileCheck, ArrowLeftRight, Landmark, Users, Briefcase, ChartNoAxesCombined, Settings, ChevronLeft, ChevronRight, CreditCard, BarChart2, CalendarDays, Activity } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { motion } from 'framer-motion';
+import { useAuth } from '../../contexts/AuthContext';
+import { LogOut, LogIn } from 'lucide-react';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
@@ -16,10 +18,13 @@ const navItems = [
   { path: '/profit', label: 'P&L', icon: <ChartNoAxesCombined size={20} /> },
   { path: '/analytics/monthly', label: 'Monthly Analytics', icon: <CalendarDays size={20} /> },
   { path: '/analytics/yearly', label: 'Yearly Analytics', icon: <BarChart2 size={20} /> },
+  { path: '/logs', label: 'System Logs', icon: <Activity size={20} /> },
+  { path: '/health', label: 'System Health', icon: <Activity size={20} /> },
 ];
 
 export const Sidebar: React.FC = () => {
   const [collapsed, setCollapsed] = useState(false);
+  const { user, signOut } = useAuth();
 
   return (
     <>
@@ -95,6 +100,32 @@ export const Sidebar: React.FC = () => {
             <span className={cn("shrink-0", !collapsed && "mr-3")}><Settings size={20} /></span>
             {!collapsed && <span className="whitespace-nowrap">Settings</span>}
           </NavLink>
+          {user ? (
+            <button 
+              onClick={() => signOut()}
+              className={cn(
+                "w-full group mt-2 flex h-10 items-center rounded-xl px-3 text-sm font-medium transition-colors text-accent-red hover:bg-accent-red/10"
+              )}
+              title={collapsed ? "Logout" : undefined}
+            >
+              <span className={cn("shrink-0", !collapsed && "mr-3")}><LogOut size={20} /></span>
+              {!collapsed && <span className="whitespace-nowrap">Logout</span>}
+            </button>
+          ) : (
+            <NavLink 
+              to="/login" 
+              className={({ isActive }) => cn(
+                "group mt-2 flex h-10 items-center rounded-xl px-3 text-sm font-medium transition-colors",
+                isActive 
+                  ? "bg-accent-blue text-white shadow-sm" 
+                  : "text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
+              )}
+              title={collapsed ? "Login" : undefined}
+            >
+              <span className={cn("shrink-0", !collapsed && "mr-3")}><LogIn size={20} /></span>
+              {!collapsed && <span className="whitespace-nowrap">Login</span>}
+            </NavLink>
+          )}
         </div>
       </motion.aside>
 
@@ -109,7 +140,7 @@ export const Sidebar: React.FC = () => {
               isActive ? "text-accent-blue" : "text-text-tertiary"
             )}
           >
-            {React.cloneElement(item.icon as React.ReactElement, { size: 20 })}
+            {item.icon}
             <span className="text-[10px] font-medium">{item.label}</span>
           </NavLink>
         ))}

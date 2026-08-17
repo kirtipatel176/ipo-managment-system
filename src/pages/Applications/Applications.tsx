@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import React, { useState, useEffect, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Plus, Search, Filter, Building, User, Wallet, CreditCard,
+  Plus, Search, Filter, Building, User, CreditCard,
   CheckCircle2, ChevronDown, ArrowRightLeft, Users, Landmark, Edit2, Trash2,
 } from 'lucide-react';
-import { db } from '../../db/schema';
-import type { ApplicationType, FundingMethod } from '../../db/schema';
+import { supabase } from '../../lib/supabase';
+export type ApplicationType = 'OWN_DEMAT' | 'FRIEND_DEMAT';
+export type FundingMethod = 'NEW_MONEY' | 'EXISTING_BALANCE' | 'MIXED' | 'OWN_BANK_BLOCK';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { Input } from '../../components/ui/Input';
@@ -15,6 +16,10 @@ import { TransactionEngine } from '../../engine/TransactionEngine';
 import { Pagination } from '../../components/ui/Pagination';
 import { useIPOFilter } from '../../hooks/useIPOFilter';
 import { motion } from 'framer-motion';
+import { useToast } from '../../hooks/useToast';
+import { mapBankAccount, mapIpo, mapPerson, mapDematAccount, mapApplication } from '../../lib/mappers';
+import { useAuth } from '../../contexts/AuthContext';
+import { BlurOverlay } from '../../components/ui/BlurOverlay';
 
 // ── Allotment Modal ─────────────────────────────────────────────────────────
 interface AllotmentModalProps {
@@ -24,6 +29,9 @@ interface AllotmentModalProps {
 }
 
 const AllotmentModal: React.FC<AllotmentModalProps> = ({ app, isOpen, onClose }) => {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const submitting = useRef(false);
   const [allottedLots, setAllottedLots] = useState(0);
   const [allotmentDate, setAllotmentDate] = useState(new Date().toISOString().split('T')[0]);
   const [loading, setLoading] = useState(false);
@@ -36,8 +44,21 @@ const AllotmentModal: React.FC<AllotmentModalProps> = ({ app, isOpen, onClose })
   const [reuseAmount, setReuseAmount] = useState(0);
   const [reuseIpoId, setReuseIpoId] = useState(0);
 
-  const banks = useLiveQuery(() => db.bankAccounts.filter(b => b.isActive).toArray(), []);
-  const openIpos = useLiveQuery(() => db.ipos.where('status').anyOf(['OPEN', 'UPCOMING', 'CLOSED']).toArray(), []);
+  const { data: banks } = useQuery({
+    queryKey: ['banksActive'],
+    queryFn: async () => {
+      const { data } = await supabase.from('bank_accounts').select('*').eq('is_active', true);
+      return (data || []).map(mapBankAccount);
+    }
+  });
+
+  const { data: openIpos } = useQuery({
+    queryKey: ['iposOpen'],
+    queryFn: async () => {
+      const { data } = await supabase.from('ipos').select('*').in('status', ['OPEN', 'UPCOMING', 'CLOSED']);
+      return (data || []).map(mapIpo);
+    }
+  });
 
   const blockedAmount = app?.blockedAmount ?? 0;
   const price = app?.ipoPrice ?? 0;
@@ -54,36 +75,51 @@ const AllotmentModal: React.FC<AllotmentModalProps> = ({ app, isOpen, onClose })
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting.current) return;
+
     if (isFriend && refundAmount > 0 && !refundSplitValid) {
-      alert(`Refund split must total ${fmt(refundAmount)}`);
+      toast.warning(`Refund split must total ${fmt(refundAmount)}`, 'Refund Mismatch');
       return;
     }
+    submitting.current = true;
     setLoading(true);
     try {
       let refundActions = undefined;
       if (isFriend && refundAmount > 0) {
         refundActions = [];
         if (returnAmount > 0) {
-          if (!returnBankId) { alert('Select a bank to return refund to.'); setLoading(false); return; }
+          if (!returnBankId) {
+            toast.warning('Please select a bank to return the refund to.', 'Bank Required');
+            setLoading(false);
+            submitting.current = false;
+            return;
+          }
           refundActions.push({ action: 'RETURN_TO_BANK' as const, amount: returnAmount, targetBankAccountId: returnBankId, utr: returnUtr || undefined });
         }
         if (retainAmount > 0) refundActions.push({ action: 'RETAIN_WITH_FRIEND' as const, amount: retainAmount });
         if (reuseAmount > 0) {
-          if (!reuseIpoId) { alert('Select an IPO to reuse refund for.'); setLoading(false); return; }
+          if (!reuseIpoId) {
+            toast.warning('Please select an IPO to reuse the refund for.', 'IPO Required');
+            setLoading(false);
+            submitting.current = false;
+            return;
+          }
           refundActions.push({ action: 'REUSE_FOR_IPO' as const, amount: reuseAmount, targetIpoId: reuseIpoId });
         }
       }
 
       await TransactionEngine.processAllotment(app.id!, allottedLots, refundActions, allotmentDate);
+      toast.success('Allotment processed successfully.', 'Allotment Done');
+      queryClient.invalidateQueries({ queryKey: ['applications'] });
       onClose();
     } catch (err: any) {
-      alert('Error: ' + err.message);
+      toast.error(err.message ?? 'Failed to process allotment.', 'Allotment Error');
     } finally {
       setLoading(false);
+      submitting.current = false;
     }
   };
 
-  // Auto-set refund split defaults when refund amount changes
   useEffect(() => {
     setRetainAmount(refundAmount);
     setReturnAmount(0);
@@ -95,7 +131,6 @@ const AllotmentModal: React.FC<AllotmentModalProps> = ({ app, isOpen, onClose })
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={`Process Allotment — ${app.ipo?.ipoName}`}>
       <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Summary banner */}
         <div className="rounded-xl bg-bg-secondary/60 p-4 border border-black/5 text-sm space-y-2">
           <div className="flex justify-between">
             <span className="text-text-secondary">Application</span>
@@ -115,7 +150,6 @@ const AllotmentModal: React.FC<AllotmentModalProps> = ({ app, isOpen, onClose })
           </div>
         </div>
 
-        {/* Allotment input */}
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-primary">
             Lots Allotted <span className="text-text-tertiary text-xs">(0 = not allotted)</span>
@@ -128,13 +162,11 @@ const AllotmentModal: React.FC<AllotmentModalProps> = ({ app, isOpen, onClose })
           />
         </div>
 
-        {/* Allotment date */}
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-primary">Allotment Date</label>
           <Input type="date" value={allotmentDate} onChange={e => setAllotmentDate(e.target.value)} />
         </div>
 
-        {/* Auto-calculated amounts */}
         <div className="rounded-xl bg-bg-secondary/50 p-4 border border-black/5 text-sm space-y-2">
           <div className="flex justify-between">
             <span className="text-text-secondary">Investment Amount</span>
@@ -150,7 +182,6 @@ const AllotmentModal: React.FC<AllotmentModalProps> = ({ app, isOpen, onClose })
           </div>
         </div>
 
-        {/* OWN DEMAT — informational only */}
         {!isFriend && refundAmount > 0 && (
           <div className="rounded-xl border border-accent-blue/20 bg-accent-blue/5 p-4 text-sm">
             <div className="flex items-center gap-2 text-accent-blue font-medium mb-1">
@@ -164,7 +195,6 @@ const AllotmentModal: React.FC<AllotmentModalProps> = ({ app, isOpen, onClose })
           </div>
         )}
 
-        {/* FRIEND DEMAT — 3-way refund split */}
         {isFriend && refundAmount > 0 && (
           <div className="space-y-4 pt-2 border-t border-black/5">
             <div className="flex items-center justify-between">
@@ -180,7 +210,6 @@ const AllotmentModal: React.FC<AllotmentModalProps> = ({ app, isOpen, onClose })
               Split the refund across these 3 options. Total must equal {fmt(refundAmount)}.
             </p>
 
-            {/* Return to Bank */}
             <div className="rounded-xl border border-black/10 p-4 space-y-3 bg-white">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-text-primary flex items-center gap-2">
@@ -218,7 +247,6 @@ const AllotmentModal: React.FC<AllotmentModalProps> = ({ app, isOpen, onClose })
               )}
             </div>
 
-            {/* Retain with Friend */}
             <div className="rounded-xl border border-black/10 p-4 space-y-1 bg-white">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-text-primary flex items-center gap-2">
@@ -237,7 +265,6 @@ const AllotmentModal: React.FC<AllotmentModalProps> = ({ app, isOpen, onClose })
               <p className="text-xs text-text-secondary">No transaction created. Money stays with friend as unallocated balance.</p>
             </div>
 
-            {/* Reuse for Next IPO */}
             <div className="rounded-xl border border-black/10 p-4 space-y-3 bg-white">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-text-primary flex items-center gap-2">
@@ -276,9 +303,7 @@ const AllotmentModal: React.FC<AllotmentModalProps> = ({ app, isOpen, onClose })
 
         <div className="flex items-center justify-end gap-3 pt-4 border-t border-black/5">
           <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button
-            type="submit" variant="primary" disabled={loading}
-          >
+          <Button type="submit" variant="primary" disabled={loading}>
             {loading ? 'Processing...' : 'Process Allotment'}
           </Button>
         </div>
@@ -303,10 +328,10 @@ const EditApplicationModal: React.FC<EditApplicationModalProps> = ({ app, isOpen
       <form onSubmit={onSave} className="space-y-4">
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-text-primary">Notes (Optional)</label>
-          <Input 
-            value={app.notes || ''} 
-            onChange={e => setEditingApp({...app, notes: e.target.value})} 
-            placeholder="Add any tracking notes..." 
+          <Input
+            value={app.notes || ''}
+            onChange={e => setEditingApp({ ...app, notes: e.target.value })}
+            placeholder="Add any tracking notes..."
           />
         </div>
         <div className="flex items-center justify-end gap-3 pt-4 border-t border-black/5 mt-6">
@@ -320,16 +345,20 @@ const EditApplicationModal: React.FC<EditApplicationModalProps> = ({ app, isOpen
 
 // ── Main Applications Component ─────────────────────────────────────────────
 export const Applications: React.FC = () => {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const applySubmitting = useRef(false);
   const { selectedIpoId, setSelectedIpoId } = useIPOFilter();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [allotmentApp, setAllotmentApp] = useState<any>(null);
   const [editingApp, setEditingApp] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [applying, setApplying] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
 
-  // New application form state
   const [step, setStep] = useState(1);
   const [appType, setAppType] = useState<ApplicationType>('FRIEND_DEMAT');
   const [ipoId, setIpoId] = useState(0);
@@ -341,33 +370,98 @@ export const Applications: React.FC = () => {
   const [personAvailableBalance, setPersonAvailableBalance] = useState(0);
   const [bankAvailableBalance, setBankAvailableBalance] = useState(0);
 
-  const ipos = useLiveQuery(() => db.ipos.where('status').anyOf(['UPCOMING', 'OPEN', 'CLOSED', 'ALLOTMENT_PENDING']).toArray(), []);
-  const allIposForFilter = useLiveQuery(() => db.ipos.toArray(), []);
-  const allPeople = useLiveQuery(() => db.people.filter(p => p.isActive).toArray(), []);
-  const banks = useLiveQuery(() => db.bankAccounts.filter(b => b.isActive).toArray(), []);
+  const { data: ipos } = useQuery({
+    queryKey: ['iposActive'],
+    queryFn: async () => {
+      const { data } = await supabase.from('ipos').select('*').in('status', ['UPCOMING', 'OPEN', 'CLOSED', 'ALLOTMENT_PENDING']);
+      return (data || []).map(mapIpo);
+    }
+  });
 
-  // People for selection: self for OWN, non-self for FRIEND
+  const { data: allIposForFilter } = useQuery({
+    queryKey: ['ipos'],
+    queryFn: async () => {
+      const { data } = await supabase.from('ipos').select('*');
+      return (data || []).map(mapIpo);
+    }
+  });
+
+  const { data: allPeople } = useQuery({
+    queryKey: ['peopleActive'],
+    queryFn: async () => {
+      const { data } = await supabase.from('people').select('*').eq('is_active', true);
+      return (data || []).map(mapPerson);
+    }
+  });
+
+  const { data: banks } = useQuery({
+    queryKey: ['banksActive'],
+    queryFn: async () => {
+      const { data } = await supabase.from('bank_accounts').select('*').eq('is_active', true);
+      return (data || []).map(mapBankAccount);
+    }
+  });
+
+  const { data: applicantDemats } = useQuery({
+    queryKey: ['dematsActive', applicantPersonId],
+    queryFn: async () => {
+      if (!applicantPersonId) return [];
+      const { data } = await supabase.from('demat_accounts').select('*').eq('holder_person_id', applicantPersonId).eq('is_active', true);
+      return (data || []).map(mapDematAccount);
+    },
+    enabled: !!applicantPersonId
+  });
+
   const selfPeople = allPeople?.filter(p => p.isSelf) ?? [];
   const friendPeople = allPeople?.filter(p => !p.isSelf) ?? [];
 
-  // Demat accounts for selected applicant
-  const applicantDemats = useLiveQuery(async () => {
-    if (!applicantPersonId) return [];
-    return db.dematAccounts.where('holderPersonId').equals(applicantPersonId).filter(d => d.isActive).toArray();
-  }, [applicantPersonId]);
+  const { data: applications, isLoading } = useQuery({
+    queryKey: ['applications'],
+    queryFn: async () => {
+      const [
+        { data: appsData },
+        { data: iData },
+        { data: pData },
+        { data: dData },
+        { data: bData }
+      ] = await Promise.all([
+        supabase.from('applications').select('*').order('created_at', { ascending: false }),
+        supabase.from('ipos').select('*'),
+        supabase.from('people').select('*'),
+        supabase.from('demat_accounts').select('*'),
+        supabase.from('bank_accounts').select('*')
+      ]);
 
-  const applications = useLiveQuery(async () => {
-    const apps = await db.applications.toArray();
-    const populated = await Promise.all(apps.map(async app => {
-      const ipo = await db.ipos.get(app.ipoId);
-      const applicantPerson = await db.people.get(app.applicantPersonId);
-      const demat = await db.dematAccounts.get(app.dematAccountId);
-      const fundingBank = await db.bankAccounts.get(app.fundingBankAccountId);
+      const apps = (appsData || []).map(mapApplication);
+      const allIpos = (iData || []).map(mapIpo);
+      const people = (pData || []).map(mapPerson);
+      const demats = (dData || []).map(mapDematAccount);
+      const allBanks = (bData || []).map(mapBankAccount);
 
-      return { ...app, ipo, applicantPerson, demat, fundingBank };
-    }));
-    return populated.reverse();
-  }, []);
+      return apps.map(app => {
+        const ipo = allIpos.find(i => i.id === app.ipoId);
+        const applicantPerson = people.find(p => p.id === app.applicantPersonId);
+        const demat = demats.find(d => d.id === app.dematAccountId);
+        const fundingBank = allBanks.find(b => b.id === app.fundingBankAccountId);
+
+        return { ...app, ipo, applicantPerson, demat, fundingBank };
+      });
+    }
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async (app: any) => {
+      await supabase.from('applications').update({
+        notes: app.notes,
+        updated_at: new Date().toISOString()
+      }).eq('id', app.id);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['applications'] });
+      setIsEditModalOpen(false);
+      setEditingApp(null);
+    }
+  });
 
   const filteredApplications = applications?.filter(app => {
     if (selectedIpoId && app.ipoId !== selectedIpoId) return false;
@@ -385,7 +479,6 @@ export const Applications: React.FC = () => {
 
   useEffect(() => { setCurrentPage(1); }, [searchTerm, selectedIpoId]);
 
-  // Fetch person available balance when person changes
   useEffect(() => {
     if (applicantPersonId > 0 && appType === 'FRIEND_DEMAT') {
       TransactionEngine.getPersonBalance(applicantPersonId).then(b => {
@@ -396,7 +489,6 @@ export const Applications: React.FC = () => {
     }
   }, [applicantPersonId, appType]);
 
-  // Fetch bank available balance when bank changes
   useEffect(() => {
     if (fundingBankId > 0) {
       TransactionEngine.getBankAvailableBalance(fundingBankId).then(setBankAvailableBalance);
@@ -418,7 +510,7 @@ export const Applications: React.FC = () => {
     } else if (fundingMethod === 'MIXED') {
       existingBalanceAmount = Math.min(totalRequired, personAvailableBalance);
       newMoneyAmount = totalRequired - existingBalanceAmount;
-    } else { // NEW_MONEY
+    } else {
       newMoneyAmount = totalRequired;
     }
   }
@@ -434,24 +526,25 @@ export const Applications: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleUpdateApp = async (e: React.FormEvent) => {
+  const handleUpdateApp = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingApp || !editingApp.id) return;
-    await db.applications.update(editingApp.id, {
-      notes: editingApp.notes,
-      updatedAt: new Date().toISOString()
-    });
-    setIsEditModalOpen(false);
-    setEditingApp(null);
+    updateMutation.mutate(editingApp);
   };
 
-  const handleDeleteApp = (app: any) => {
-    alert('Applications cannot be deleted directly because they are linked to financial transactions and ledger allocations. Please process refunds or use cancellation workflows to maintain ledger integrity.');
+  const handleDeleteApp = () => {
+    toast.info(
+      'Applications cannot be deleted directly. They are linked to financial transactions and ledger allocations. Process refunds or use cancellation workflows to maintain ledger integrity.',
+      'Deletion Not Allowed'
+    );
   };
 
   const handleApply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!ipoId || !applicantPersonId || !dematAccountId || !fundingBankId) return;
+    if (applySubmitting.current) return;
+    applySubmitting.current = true;
+    setApplying(true);
 
     try {
       await TransactionEngine.applyForIPO({
@@ -467,10 +560,15 @@ export const Applications: React.FC = () => {
         date: new Date().toISOString().split('T')[0],
       });
 
+      queryClient.invalidateQueries({ queryKey: ['applications'] });
+      toast.success('IPO application submitted successfully!', 'Application Submitted');
       setIsModalOpen(false);
       resetForm();
     } catch (err: any) {
-      alert('Error: ' + err.message);
+      toast.error(err.message ?? 'Failed to submit application.', 'Application Error');
+    } finally {
+      setApplying(false);
+      applySubmitting.current = false;
     }
   };
 
@@ -487,15 +585,14 @@ export const Applications: React.FC = () => {
 
   const getMoneyStatusBadge = (ms: string) => {
     switch (ms) {
-      case 'BLOCKED':  return <Badge variant="warning">Blocked</Badge>;
+      case 'BLOCKED': return <Badge variant="warning">Blocked</Badge>;
       case 'INVESTED': return <Badge variant="success">Invested</Badge>;
       case 'RELEASED': return <Badge variant="default">Released</Badge>;
-      case 'PARTIAL':  return <Badge variant="warning">Partial</Badge>;
+      case 'PARTIAL': return <Badge variant="warning">Partial</Badge>;
       default: return <Badge variant="default">{ms}</Badge>;
     }
   };
 
-  // Summary row calculations
   const summaryTotals = filteredApplications.reduce(
     (acc, app) => ({
       lots: acc.lots + app.appliedLots,
@@ -506,6 +603,14 @@ export const Applications: React.FC = () => {
     { lots: 0, blocked: 0, invested: 0, refund: 0 }
   );
 
+  if (isLoading) {
+    return (
+      <div className="flex h-full w-full items-center justify-center py-20">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent-blue/20 border-t-accent-blue" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 pb-10">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -515,7 +620,7 @@ export const Applications: React.FC = () => {
             Complete view of all IPO applications — Friend Demat and Own Demat.
           </p>
         </div>
-        <Button variant="primary" icon={<Plus size={16} />} onClick={() => setIsModalOpen(true)}>
+        <Button variant="primary" icon={<Plus size={16} />} onClick={() => setIsModalOpen(true)} disabled={!user}>
           New Application
         </Button>
       </div>
@@ -617,17 +722,23 @@ export const Applications: React.FC = () => {
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="text-sm font-medium text-text-primary">{fmt(app.blockedAmount)}</span>
+                    <BlurOverlay blurLevel="blur-sm">
+                      <span className="text-sm font-medium text-text-primary">{fmt(app.blockedAmount)}</span>
+                    </BlurOverlay>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className={`text-sm font-medium ${app.investmentAmount > 0 ? 'text-accent-green' : 'text-text-tertiary'}`}>
-                      {app.investmentAmount > 0 ? fmt(app.investmentAmount) : '—'}
-                    </span>
+                    <BlurOverlay blurLevel="blur-sm">
+                      <span className={`text-sm font-medium ${app.investmentAmount > 0 ? 'text-accent-green' : 'text-text-tertiary'}`}>
+                        {app.investmentAmount > 0 ? fmt(app.investmentAmount) : '—'}
+                      </span>
+                    </BlurOverlay>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className={`text-sm font-medium ${app.refundAmount > 0 ? 'text-accent-orange' : 'text-text-tertiary'}`}>
-                      {app.refundAmount > 0 ? fmt(app.refundAmount) : '—'}
-                    </span>
+                    <BlurOverlay blurLevel="blur-sm">
+                      <span className={`text-sm font-medium ${app.refundAmount > 0 ? 'text-accent-orange' : 'text-text-tertiary'}`}>
+                        {app.refundAmount > 0 ? fmt(app.refundAmount) : '—'}
+                      </span>
+                    </BlurOverlay>
                   </td>
                   <td className="px-4 py-3 text-center">{getStatusBadge(app)}</td>
                   <td className="px-4 py-3 text-center">{getMoneyStatusBadge(app.moneyStatus)}</td>
@@ -635,21 +746,23 @@ export const Applications: React.FC = () => {
                     <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       {app.allotmentStatus === 'PENDING' && (
                         <Button size="sm" variant="outline" className="h-8 text-xs px-2"
-                          onClick={() => setAllotmentApp(app)}>
+                          onClick={() => setAllotmentApp(app)} disabled={!user}>
                           Allotment
                         </Button>
                       )}
-                      <button 
-                        onClick={() => openEditModal(app)}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-text-tertiary transition-all hover:bg-accent-blue/10 hover:text-accent-blue"
-                        title="Edit Notes"
+                      <button
+                        onClick={() => { if(user) openEditModal(app); }}
+                        className={`flex h-8 w-8 items-center justify-center rounded-full transition-all ${user ? 'text-text-tertiary hover:bg-accent-blue/10 hover:text-accent-blue' : 'text-text-tertiary/30 cursor-not-allowed'}`}
+                        title={user ? "Edit Notes" : "Login to Edit"}
+                        disabled={!user}
                       >
                         <Edit2 size={16} />
                       </button>
-                      <button 
-                        onClick={() => handleDeleteApp(app)}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-text-tertiary transition-all hover:bg-accent-red/10 hover:text-accent-red"
-                        title="Delete Application"
+                      <button
+                        onClick={() => { if(user) handleDeleteApp(); }}
+                        className={`flex h-8 w-8 items-center justify-center rounded-full transition-all ${user ? 'text-text-tertiary hover:bg-accent-red/10 hover:text-accent-red' : 'text-text-tertiary/30 cursor-not-allowed'}`}
+                        title={user ? "Delete Application" : "Login to Delete"}
+                        disabled={!user}
                       >
                         <Trash2 size={16} />
                       </button>
@@ -684,8 +797,6 @@ export const Applications: React.FC = () => {
       {/* New Application Modal */}
       <Modal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); resetForm(); }} title="New IPO Application">
         <form onSubmit={handleApply} className="space-y-5">
-
-          {/* Step indicator */}
           <div className="flex items-center gap-2">
             {[1, 2, 3].map(s => (
               <React.Fragment key={s}>
@@ -706,7 +817,6 @@ export const Applications: React.FC = () => {
             <span>Lots & Summary</span>
           </div>
 
-          {/* Step 1 */}
           {step === 1 && (
             <div className="space-y-4">
               <div className="space-y-1.5">
@@ -757,7 +867,6 @@ export const Applications: React.FC = () => {
             </div>
           )}
 
-          {/* Step 2 */}
           {step === 2 && (
             <div className="space-y-4">
               <div className="space-y-1.5">
@@ -859,7 +968,6 @@ export const Applications: React.FC = () => {
             </div>
           )}
 
-          {/* Step 3 */}
           {step === 3 && selectedIpo && (
             <div className="space-y-4">
               <div className="space-y-1.5">
@@ -879,7 +987,6 @@ export const Applications: React.FC = () => {
                 />
               </div>
 
-              {/* Summary */}
               <div className="rounded-xl bg-bg-secondary/50 p-4 border border-black/5 text-sm space-y-2">
                 <div className="flex justify-between"><span className="text-text-secondary">IPO</span><span className="font-medium">{selectedIpo.ipoName}</span></div>
                 <div className="flex justify-between"><span className="text-text-secondary">Type</span><span className="font-medium">{appType === 'FRIEND_DEMAT' ? 'Friend Demat' : 'Own Demat'}</span></div>
@@ -915,9 +1022,9 @@ export const Applications: React.FC = () => {
                 <Button type="button" variant="ghost" onClick={() => setStep(2)}>← Back</Button>
                 <Button
                   type="submit" variant="primary"
-                  disabled={appliedLots < 1 || (appType === 'OWN_DEMAT' && totalRequired > bankAvailableBalance)}
+                  disabled={applying || appliedLots < 1 || (appType === 'OWN_DEMAT' && totalRequired > bankAvailableBalance)}
                 >
-                  Submit Application
+                  {applying ? 'Submitting...' : 'Submit Application'}
                 </Button>
               </div>
             </div>
@@ -925,13 +1032,11 @@ export const Applications: React.FC = () => {
         </form>
       </Modal>
 
-      {/* Allotment Modal */}
       <AllotmentModal
         app={allotmentApp}
         isOpen={!!allotmentApp}
         onClose={() => setAllotmentApp(null)}
       />
-      {/* Edit Application Modal */}
       <EditApplicationModal
         app={editingApp}
         isOpen={isEditModalOpen}

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../../db/schema';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '../../lib/supabase';
+import { mapPerson, mapApplication, mapTransaction, mapIpo } from '../../lib/mappers';
 import { Modal } from '../../components/ui/Modal';
 import { Badge } from '../../components/ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/Table';
@@ -14,39 +15,49 @@ interface Props {
 export const PersonDetailsModal: React.FC<Props> = ({ isOpen, onClose, personId }) => {
   const [activeTab, setActiveTab] = useState<'applications' | 'transactions'>('applications');
 
-  const data = useLiveQuery(async () => {
-    if (!personId) return null;
-    
-    const person = await db.people.get(personId);
-    
-    // Applications
-    const apps = await db.applications.where('applicantPersonId').equals(personId).toArray();
-    const populatedApps = await Promise.all(apps.map(async app => {
-      const ipo = await db.ipos.get(app.ipoId);
-      return { ...app, ipo };
-    }));
-    populatedApps.reverse();
+  const { data, isLoading } = useQuery({
+    queryKey: ['personDetails', personId],
+    queryFn: async () => {
+      if (!personId) return null;
 
-    // Transactions
-    const txs = await db.transactions
-      .filter(t => t.fromPersonId === personId || t.toPersonId === personId)
-      .toArray();
-      
-    const populatedTxs = await Promise.all(txs.map(async tx => {
-      let ipoName = '-';
-      if (tx.ipoId) {
-        const ipo = await db.ipos.get(tx.ipoId);
-        if (ipo) ipoName = ipo.ipoName;
-      }
-      return { ...tx, ipoName };
-    }));
-    populatedTxs.reverse();
+      const [
+        { data: personData },
+        { data: appsData },
+        { data: txsData },
+        { data: iposData }
+      ] = await Promise.all([
+        supabase.from('people').select('*').eq('id', personId).single(),
+        supabase.from('applications').select('*').eq('applicant_person_id', personId),
+        supabase.from('transactions').select('*').or(`from_person_id.eq.${personId},to_person_id.eq.${personId}`),
+        supabase.from('ipos').select('*')
+      ]);
 
-    return { person, applications: populatedApps, transactions: populatedTxs };
-  }, [personId]);
+      const person = personData ? mapPerson(personData) : null;
+      const apps = (appsData || []).map(mapApplication);
+      const txs = (txsData || []).map(mapTransaction);
+      const ipos = (iposData || []).map(mapIpo);
+
+      const populatedApps = apps.map(app => {
+        const ipo = ipos.find(i => i.id === app.ipoId);
+        return { ...app, ipo };
+      }).reverse();
+
+      const populatedTxs = txs.map(tx => {
+        let ipoName = '-';
+        if (tx.ipoId) {
+          const ipo = ipos.find(i => i.id === tx.ipoId);
+          if (ipo) ipoName = ipo.ipoName;
+        }
+        return { ...tx, ipoName };
+      }).reverse();
+
+      return { person, applications: populatedApps, transactions: populatedTxs };
+    },
+    enabled: !!personId,
+  });
 
   if (!isOpen || !personId) return null;
-  if (!data) return (
+  if (isLoading || !data) return (
     <Modal isOpen={isOpen} onClose={onClose} title="Loading..." className="max-w-4xl">
       <div className="p-8 text-center text-text-secondary">Loading details...</div>
     </Modal>

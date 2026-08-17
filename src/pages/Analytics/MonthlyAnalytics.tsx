@@ -1,16 +1,30 @@
 import React, { useState, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../../db/schema';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '../../lib/supabase';
+import { mapTransaction, mapApplication } from '../../lib/mappers';
 import { Card } from '../../components/ui/Card';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
-import { Calendar, TrendingUp, ArrowUpRight, ArrowDownLeft, RefreshCcw } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { Calendar, TrendingUp } from 'lucide-react';
 
 export const MonthlyAnalytics: React.FC = () => {
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
 
-  const txs = useLiveQuery(() => db.transactions.toArray(), []) || [];
-  const apps = useLiveQuery(() => db.applications.toArray(), []) || [];
+  const { data: txs = [] } = useQuery({
+    queryKey: ['transactions'],
+    queryFn: async () => {
+      const { data } = await supabase.from('transactions').select('*');
+      return (data || []).map(mapTransaction);
+    }
+  });
+
+  const { data: apps = [] } = useQuery({
+    queryKey: ['applications'],
+    queryFn: async () => {
+      const { data } = await supabase.from('applications').select('*');
+      return (data || []).map(mapApplication);
+    }
+  });
 
   const formatCurrency = (val: number = 0) =>
     new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(val);
@@ -18,7 +32,6 @@ export const MonthlyAnalytics: React.FC = () => {
   const stats = useMemo(() => {
     let moneySent = 0, moneyReceived = 0, selfTransfers = 0, ipoRefunds = 0, ipoSales = 0;
     
-    // Filter transactions by month/year
     const monthlyTxs = txs.filter(t => {
       const d = new Date(t.date);
       return d.getFullYear() === selectedYear && (d.getMonth() + 1) === selectedMonth;
@@ -44,7 +57,6 @@ export const MonthlyAnalytics: React.FC = () => {
     return { moneySent, moneyReceived, selfTransfers, ipoRefunds, ipoSales, totalApplied, lotsApplied, lotsAllotted };
   }, [txs, apps, selectedYear, selectedMonth]);
 
-  // Generate chart data (by day)
   const chartData = useMemo(() => {
     const daysInMonth = new Date(selectedYear, selectedMonth, 0).getDate();
     const data = [];
@@ -122,7 +134,7 @@ export const MonthlyAnalytics: React.FC = () => {
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#00000010" />
               <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#666' }} />
               <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#666' }} tickFormatter={v => '₹' + (v/1000) + 'k'} />
-              <Tooltip formatter={(value: number) => formatCurrency(value)} cursor={{ fill: '#00000005' }} />
+              <Tooltip formatter={(value: any) => formatCurrency(value)} cursor={{ fill: '#00000005' }} />
               <Legend />
               <Bar dataKey="sent" name="Money Sent" fill="#ef4444" radius={[4, 4, 0, 0]} />
               <Bar dataKey="received" name="Money Received" fill="#22c55e" radius={[4, 4, 0, 0]} />

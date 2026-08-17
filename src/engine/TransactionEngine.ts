@@ -1,15 +1,7 @@
-import { db } from '../db/schema';
-import type { AllocationPurpose } from '../db/schema';
+import { supabase } from '../lib/supabase';
+import type { Database } from '../db/supabaseTypes';
 
-// ====================================================
-// TRANSACTION ENGINE v2
-// Money-Flow Rules:
-//   1. Real bank movement → creates a Transaction
-//   2. Internal state change → creates/updates MoneyAllocation only
-//   3. OWN_DEMAT not-allotted → block released, NO transaction
-//   4. FRIEND_DEMAT not-allotted → refund via 3-way split
-//   5. Self-transfer → Transaction (SELF_TRANSFER) but NOT income/expense
-// ====================================================
+type AllocationPurpose = Database['public']['Enums']['allocation_purpose'];
 
 export interface BankBalanceOverview {
   accountId: number;
@@ -18,74 +10,70 @@ export interface BankBalanceOverview {
   openingBalance: number;
   totalReceived: number;
   totalSent: number;
-  grossBalance: number;      // openingBalance + received - sent (all transactions)
-  ipoBlocked: number;        // money currently blocked in IPO applications from this bank
-  availableBalance: number;  // grossBalance - ipoBlocked
+  grossBalance: number;
+  ipoBlocked: number;
+  availableBalance: number;
 }
 
 export interface PersonBalanceOverview {
   personId: number;
   fullName: string;
-  totalReceived: number;     // total money sent to this person (bank → person transactions)
-  totalReturned: number;     // total money returned from this person (person → bank transactions)
-  ipoBlocked: number;        // allocations: IPO_BLOCKED with this person as holder
-  unallocated: number;       // allocations: UNALLOCATED with this person as holder
-  invested: number;          // allocations: INVESTED with this person as holder
-  currentlyHeld: number;     // ipoBlocked + unallocated + invested
+  totalReceived: number;
+  totalReturned: number;
+  ipoBlocked: number;
+  unallocated: number;
+  invested: number;
+  currentlyHeld: number;
 }
 
-// ── Refund action plan for processAllotment (FRIEND_DEMAT) ─────────────────
 export interface RefundAction {
   action: 'RETURN_TO_BANK' | 'RETAIN_WITH_FRIEND' | 'REUSE_FOR_IPO';
   amount: number;
-  targetBankAccountId?: number;  // required for RETURN_TO_BANK
-  targetIpoId?: number;          // required for REUSE_FOR_IPO (creates allocation to next IPO)
-  utr?: string;                  // optional for RETURN_TO_BANK
+  targetBankAccountId?: number;
+  targetIpoId?: number;
+  utr?: string;
 }
 
 export class TransactionEngine {
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // STEP 1: BANK BALANCE
-  // Computes actual available balance = gross balance - currently blocked
-  // ─────────────────────────────────────────────────────────────────────────
-
   static async getBankBalance(accountId: number): Promise<BankBalanceOverview> {
-    const account = await db.bankAccounts.get(accountId);
-    if (!account) throw new Error('Bank account not found');
+    const { data: account, error: accErr } = await supabase
+      .from('bank_accounts')
+      .select('*')
+      .eq('id', accountId)
+      .single();
 
-    // All completed transactions involving this bank
-    const transactions = await db.transactions
-      .filter(t =>
-        t.status === 'COMPLETED' &&
-        (t.fromBankAccountId === accountId || t.toBankAccountId === accountId)
-      )
-      .toArray();
+    if (accErr || !account) throw new Error('Bank account not found');
+
+    const { data: transactions } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('status', 'COMPLETED')
+      .or(`from_bank_account_id.eq.${accountId},to_bank_account_id.eq.${accountId}`);
 
     let totalSent = 0;
     let totalReceived = 0;
-    for (const tx of transactions) {
-      if (tx.fromBankAccountId === accountId) totalSent += tx.amount;
-      if (tx.toBankAccountId   === accountId) totalReceived += tx.amount;
+    for (const tx of transactions || []) {
+      if (tx.from_bank_account_id === accountId) totalSent += tx.amount;
+      if (tx.to_bank_account_id === accountId) totalReceived += tx.amount;
     }
 
-    const grossBalance = account.openingBalance + totalReceived - totalSent;
+    const grossBalance = account.opening_balance + totalReceived - totalSent;
 
-    // IPO-blocked = active IPO_BLOCKED allocations funded from this bank
-    const blockedAllocs = await db.allocations
-      .filter(a =>
-        a.status === 'ACTIVE' &&
-        a.purpose === 'IPO_BLOCKED' &&
-        a.originBankAccountId === accountId
-      )
-      .toArray();
-    const ipoBlocked = blockedAllocs.reduce((s, a) => s + a.amount, 0);
+    const { data: blockedAllocs } = await supabase
+      .from('allocations')
+      .select('*')
+      .eq('status', 'ACTIVE')
+      .eq('purpose', 'IPO_BLOCKED')
+      .eq('origin_bank_account_id', accountId);
+
+    const ipoBlocked = (blockedAllocs || []).reduce((s, a) => s + a.amount, 0);
 
     return {
       accountId,
-      bankName: account.bankName,
-      accountName: account.accountName,
-      openingBalance: account.openingBalance,
+      bankName: account.bank_name,
+      accountName: account.account_name,
+      openingBalance: account.opening_balance,
       totalReceived,
       totalSent,
       grossBalance,
@@ -99,43 +87,52 @@ export class TransactionEngine {
     return overview.availableBalance;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // STEP 2: PERSON BALANCE (derived from allocations — never stored directly)
-  // ─────────────────────────────────────────────────────────────────────────
-
   static async getPersonBalance(personId: number): Promise<PersonBalanceOverview> {
-    const person = await db.people.get(personId);
-    if (!person) throw new Error('Person not found');
+    const { data: person, error: perErr } = await supabase
+      .from('people')
+      .select('*')
+      .eq('id', personId)
+      .single();
 
-    // Active allocations where this person is the current holder
-    const allocations = await db.allocations
-      .filter(a => a.status === 'ACTIVE' && a.currentHolderType === 'PERSON' && a.currentHolderId === personId)
-      .toArray();
+    if (perErr || !person) throw new Error('Person not found');
+
+    const { data: allocations } = await supabase
+      .from('allocations')
+      .select('*')
+      .eq('status', 'ACTIVE')
+      .eq('current_holder_type', 'PERSON')
+      .eq('current_holder_id', personId);
 
     let ipoBlocked = 0;
     let unallocated = 0;
     let invested = 0;
-    for (const a of allocations) {
+    for (const a of allocations || []) {
       if (a.purpose === 'IPO_BLOCKED') ipoBlocked += a.amount;
       else if (a.purpose === 'UNALLOCATED') unallocated += a.amount;
       else if (a.purpose === 'INVESTED') invested += a.amount;
     }
 
-    // Total received = sum of MONEY_SENT transactions TO this person
-    const sentTxs = await db.transactions
-      .filter(t => t.status === 'COMPLETED' && t.toPersonId === personId && !!t.fromBankAccountId)
-      .toArray();
-    const totalReceived = sentTxs.reduce((s, t) => s + t.amount, 0);
+    const { data: sentTxs } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('status', 'COMPLETED')
+      .eq('to_person_id', personId)
+      .not('from_bank_account_id', 'is', null);
 
-    // Total returned = sum of MONEY_RECEIVED / IPO_REFUND transactions FROM this person
-    const returnTxs = await db.transactions
-      .filter(t => t.status === 'COMPLETED' && t.fromPersonId === personId && !!t.toBankAccountId)
-      .toArray();
-    const totalReturned = returnTxs.reduce((s, t) => s + t.amount, 0);
+    const totalReceived = (sentTxs || []).reduce((s, t) => s + t.amount, 0);
+
+    const { data: returnTxs } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('status', 'COMPLETED')
+      .eq('from_person_id', personId)
+      .not('to_bank_account_id', 'is', null);
+
+    const totalReturned = (returnTxs || []).reduce((s, t) => s + t.amount, 0);
 
     return {
       personId,
-      fullName: person.fullName,
+      fullName: person.full_name,
       totalReceived,
       totalReturned,
       ipoBlocked,
@@ -145,11 +142,6 @@ export class TransactionEngine {
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // STEP 3: SEND MONEY TO PERSON (FRIEND_DEMAT new funding)
-  // Real bank transaction + creates UNALLOCATED allocation
-  // ─────────────────────────────────────────────────────────────────────────
-
   static async sendMoneyToPerson(
     amount: number,
     bankAccountId: number,
@@ -158,53 +150,54 @@ export class TransactionEngine {
     utr?: string,
     notes?: string
   ): Promise<number> {
-    return await db.transaction('rw', [db.transactions, db.allocations, db.journeyEvents], async () => {
-      if (utr) {
-        const existing = await db.transactions.where('utr').equals(utr).first();
-        if (existing) throw new Error(`Duplicate UTR: ${utr}`);
-      }
+    if (utr) {
+      const { data: existing } = await supabase.from('transactions').select('id').eq('utr', utr).single();
+      if (existing) throw new Error(`Duplicate UTR: ${utr}`);
+    }
 
-      const now = new Date().toISOString();
+    const now = new Date().toISOString();
 
-      const txId = await db.transactions.add({
-        transactionType: 'MONEY_SENT',
-        amount, date,
-        fromBankAccountId: bankAccountId,
-        toPersonId: personId,
-        utr, notes,
-        status: 'COMPLETED',
-        createdAt: now, updatedAt: now,
-      });
+    const { data: tx, error: txErr } = await supabase.from('transactions').insert({
+      transaction_type: 'MONEY_SENT',
+      amount,
+      date,
+      from_bank_account_id: bankAccountId,
+      to_person_id: personId,
+      utr,
+      notes,
+      status: 'COMPLETED',
+      created_at: now,
+      updated_at: now,
+    }).select('id').single();
 
-      const allocationId = `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      await db.allocations.add({
-        allocationId, amount,
-        ownerId: 'SELF',
-        currentHolderType: 'PERSON',
-        currentHolderId: personId,
-        purpose: 'UNALLOCATED',
-        originBankAccountId: bankAccountId,
-        status: 'ACTIVE',
-        createdAt: now, updatedAt: now,
-      });
+    if (txErr || !tx) throw new Error(`Transaction failed: ${txErr?.message}`);
 
-      await db.journeyEvents.add({
-        allocationId, date,
-        eventType: 'SENT_TO_FRIEND',
-        description: `₹${amount} sent from bank to person`,
-        transactionId: txId as number,
-        createdAt: now,
-      });
-
-      return txId as number;
+    const allocationId = `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const { error: allocErr } = await supabase.from('allocations').insert({
+      allocation_id: allocationId,
+      amount,
+      owner_id: 'SELF',
+      current_holder_type: 'PERSON',
+      current_holder_id: personId,
+      purpose: 'UNALLOCATED',
+      origin_bank_account_id: bankAccountId,
+      status: 'ACTIVE',
+      created_at: now,
+      updated_at: now,
     });
-  }
+    if (allocErr) throw new Error(`Allocation failed: ${allocErr.message}`);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // STEP 4: SELF TRANSFER (My Bank A → My Bank B)
-  // Creates a SELF_TRANSFER transaction.
-  // Does NOT count as income or expense. Just shifts location.
-  // ─────────────────────────────────────────────────────────────────────────
+    await supabase.from('journey_events').insert({
+      allocation_id: allocationId,
+      date,
+      event_type: 'SENT_TO_FRIEND',
+      description: `₹${amount} sent from bank to person`,
+      transaction_id: tx.id,
+      created_at: now,
+    });
+
+    return tx.id;
+  }
 
   static async selfTransfer(
     fromBankAccountId: number,
@@ -219,49 +212,33 @@ export class TransactionEngine {
     }
 
     if (utr) {
-      const existing = await db.transactions.where('utr').equals(utr).first();
+      const { data: existing } = await supabase.from('transactions').select('id').eq('utr', utr).single();
       if (existing) throw new Error(`Duplicate UTR: ${utr}`);
     }
 
-    // Validate available balance
     const available = await TransactionEngine.getBankAvailableBalance(fromBankAccountId);
     if (available < amount) {
       throw new Error(`Insufficient available balance. Available: ₹${available}, Required: ₹${amount}`);
     }
 
     const now = new Date().toISOString();
-    const txId = await db.transactions.add({
-      transactionType: 'SELF_TRANSFER',
-      amount, date,
-      fromBankAccountId, toBankAccountId,
-      utr, notes,
+    const { data: tx, error } = await supabase.from('transactions').insert({
+      transaction_type: 'SELF_TRANSFER',
+      amount,
+      date,
+      from_bank_account_id: fromBankAccountId,
+      to_bank_account_id: toBankAccountId,
+      utr,
+      notes,
       status: 'COMPLETED',
-      createdAt: now, updatedAt: now,
-    });
+      created_at: now,
+      updated_at: now,
+    }).select('id').single();
 
-    return txId as number;
+    if (error || !tx) throw new Error(`Transfer failed: ${error?.message}`);
+
+    return tx.id;
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // STEP 5: APPLY FOR IPO
-  //
-  // OWN_DEMAT:
-  //   - No person involved
-  //   - Validates bank available balance ≥ required
-  //   - Creates Application + IPO_BLOCKED allocation from bank
-  //
-  // FRIEND_DEMAT (NEW_MONEY):
-  //   - Validates bank available balance ≥ newMoneyAmount
-  //   - Creates MONEY_SENT transaction
-  //   - Creates UNALLOCATED allocation → then immediately converts to IPO_BLOCKED
-  //
-  // FRIEND_DEMAT (EXISTING_BALANCE):
-  //   - No new bank transaction
-  //   - Converts existing UNALLOCATED allocations from person to IPO_BLOCKED
-  //
-  // FRIEND_DEMAT (MIXED):
-  //   - Both of the above
-  // ─────────────────────────────────────────────────────────────────────────
 
   static async applyForIPO(params: {
     ipoId: number;
@@ -276,488 +253,496 @@ export class TransactionEngine {
     date: string;
     notes?: string;
   }): Promise<number> {
-    return await db.transaction('rw', [
-      db.ipos, db.applications, db.transactions, db.allocations, db.journeyEvents, db.dematAccounts, db.bankAccounts
-    ], async () => {
-      const ipo = await db.ipos.get(params.ipoId);
-      if (!ipo) throw new Error('IPO not found');
+    const { data: ipo } = await supabase.from('ipos').select('*').eq('id', params.ipoId).single();
+    if (!ipo) throw new Error('IPO not found');
 
-      const demat = await db.dematAccounts.get(params.dematAccountId);
-      if (!demat) throw new Error('Demat account not found');
+    const { data: demat } = await supabase.from('demat_accounts').select('*').eq('id', params.dematAccountId).single();
+    if (!demat) throw new Error('Demat account not found');
 
-      const ipoPrice = ipo.pricePerShare;
-      const lotSize = ipo.lotSize;
-      const blockedAmount = params.appliedLots * lotSize * ipoPrice;
-      const newMoney = params.newMoneyAmount ?? 0;
-      const existingMoney = params.existingBalanceAmount ?? 0;
-      const now = new Date().toISOString();
+    const ipoPrice = ipo.price_per_share;
+    const lotSize = ipo.lot_size;
+    const blockedAmount = params.appliedLots * lotSize * ipoPrice;
+    const newMoney = params.newMoneyAmount ?? 0;
+    const existingMoney = params.existingBalanceAmount ?? 0;
+    const now = new Date().toISOString();
 
-      // Validate funding totals match for friend demat
-      const totalFunding = newMoney + existingMoney;
-      if (params.applicationType === 'FRIEND_DEMAT') {
-        if (Math.abs(totalFunding - blockedAmount) > 0.01) {
-          throw new Error(`Funding mismatch: required ₹${blockedAmount}, got ₹${totalFunding}`);
-        }
+    const totalFunding = newMoney + existingMoney;
+    if (params.applicationType === 'FRIEND_DEMAT') {
+      if (Math.abs(totalFunding - blockedAmount) > 0.01) {
+        throw new Error(`Funding mismatch: required ₹${blockedAmount}, got ₹${totalFunding}`);
+      }
+    }
+
+    const { data: app, error: appErr } = await supabase.from('applications').insert({
+      ipo_id: params.ipoId,
+      application_type: params.applicationType,
+      applicant_person_id: params.applicantPersonId,
+      demat_account_id: params.dematAccountId,
+      funding_bank_account_id: params.fundingBankAccountId,
+      funding_method: params.fundingMethod,
+      new_money_amount: newMoney,
+      existing_balance_amount: existingMoney,
+      applied_lots: params.appliedLots,
+      allotted_lots: 0,
+      ipo_price: ipoPrice,
+      lot_size_snapshot: lotSize,
+      blocked_amount: blockedAmount,
+      investment_amount: 0,
+      refund_amount: 0,
+      application_status: 'APPLIED',
+      money_status: 'BLOCKED',
+      allotment_status: 'PENDING',
+      listing_status: 'NOT_LISTED',
+      notes: params.notes,
+      created_at: now,
+      updated_at: now,
+    }).select('id').single();
+
+    if (appErr || !app) throw new Error(`Failed to create application: ${appErr?.message}`);
+    const appId = app.id;
+
+    if (params.applicationType === 'OWN_DEMAT' || params.fundingMethod === 'OWN_BANK_BLOCK') {
+      const available = await TransactionEngine.getBankAvailableBalance(params.fundingBankAccountId);
+      if (available < blockedAmount) {
+        await supabase.from('applications').delete().eq('id', appId);
+        throw new Error(`Insufficient bank balance. Available: ₹${available}, Required: ₹${blockedAmount}`);
       }
 
-      // Create the application record
-      const appId = await db.applications.add({
-        ipoId: params.ipoId,
-        applicationType: params.applicationType,
-        applicantPersonId: params.applicantPersonId,
-        dematAccountId: params.dematAccountId,
-        fundingBankAccountId: params.fundingBankAccountId,
-        fundingMethod: params.fundingMethod,
-        newMoneyAmount: newMoney,
-        existingBalanceAmount: existingMoney,
-        appliedLots: params.appliedLots,
-        allottedLots: 0,
-        ipoPrice,
-        lotSizeSnapshot: lotSize,
-        blockedAmount,
-        investmentAmount: 0,
-        refundAmount: 0,
-        applicationStatus: 'APPLIED',
-        moneyStatus: 'BLOCKED',
-        allotmentStatus: 'PENDING',
-        listingStatus: 'NOT_LISTED',
-        notes: params.notes,
-        createdAt: now, updatedAt: now,
-      }) as number;
+      const allocationId = `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      await supabase.from('allocations').insert({
+        allocation_id: allocationId,
+        amount: blockedAmount,
+        owner_id: 'SELF',
+        current_holder_type: 'BANK',
+        current_holder_id: params.fundingBankAccountId,
+        purpose: 'IPO_BLOCKED',
+        ipo_id: params.ipoId,
+        application_id: appId,
+        origin_bank_account_id: params.fundingBankAccountId,
+        status: 'ACTIVE',
+        created_at: now,
+        updated_at: now,
+      });
 
-      if (params.applicationType === 'OWN_DEMAT' || params.fundingMethod === 'OWN_BANK_BLOCK') {
-        // ── OWN DEMAT: validate and create a bank-level blocked allocation ──
+      await supabase.from('journey_events').insert({
+        allocation_id: allocationId,
+        date: params.date,
+        event_type: 'IPO_BLOCKED',
+        description: `₹${blockedAmount} blocked for ${ipo.symbol} (Own Demat)`,
+        application_id: appId,
+        created_at: now,
+      });
+
+    } else {
+      if (newMoney > 0) {
         const available = await TransactionEngine.getBankAvailableBalance(params.fundingBankAccountId);
-        if (available < blockedAmount) {
-          throw new Error(`Insufficient bank balance. Available: ₹${available}, Required: ₹${blockedAmount}`);
+        if (available < newMoney) {
+          await supabase.from('applications').delete().eq('id', appId);
+          throw new Error(`Insufficient bank balance. Available: ₹${available}, Required: ₹${newMoney}`);
         }
+
+        const { data: tx } = await supabase.from('transactions').insert({
+          transaction_type: 'MONEY_SENT',
+          amount: newMoney,
+          date: params.date,
+          from_bank_account_id: params.fundingBankAccountId,
+          to_person_id: params.applicantPersonId,
+          ipo_id: params.ipoId,
+          application_id: appId,
+          status: 'COMPLETED',
+          created_at: now,
+          updated_at: now,
+        }).select('id').single();
 
         const allocationId = `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        await db.allocations.add({
-          allocationId, amount: blockedAmount,
-          ownerId: 'SELF',
-          currentHolderType: 'BANK',
-          currentHolderId: params.fundingBankAccountId,
+        await supabase.from('allocations').insert({
+          allocation_id: allocationId,
+          amount: newMoney,
+          owner_id: 'SELF',
+          current_holder_type: 'PERSON',
+          current_holder_id: params.applicantPersonId,
           purpose: 'IPO_BLOCKED',
-          ipoId: params.ipoId,
-          applicationId: appId,
-          originBankAccountId: params.fundingBankAccountId,
+          ipo_id: params.ipoId,
+          application_id: appId,
+          origin_bank_account_id: params.fundingBankAccountId,
           status: 'ACTIVE',
-          createdAt: now, updatedAt: now,
+          created_at: now,
+          updated_at: now,
         });
 
-        await db.journeyEvents.add({
-          allocationId, date: params.date,
-          eventType: 'IPO_BLOCKED',
-          description: `₹${blockedAmount} blocked for ${ipo.symbol} (Own Demat)`,
-          applicationId: appId,
-          createdAt: now,
-        });
-
-      } else {
-        // ── FRIEND DEMAT ──────────────────────────────────────────────────
-
-        // Handle new money (if any)
-        if (newMoney > 0) {
-          const available = await TransactionEngine.getBankAvailableBalance(params.fundingBankAccountId);
-          if (available < newMoney) {
-            throw new Error(`Insufficient bank balance. Available: ₹${available}, Required: ₹${newMoney}`);
-          }
-
-          const txId = await db.transactions.add({
-            transactionType: 'MONEY_SENT',
-            amount: newMoney,
+        if (tx) {
+          await supabase.from('journey_events').insert({
+            allocation_id: allocationId,
             date: params.date,
-            fromBankAccountId: params.fundingBankAccountId,
-            toPersonId: params.applicantPersonId,
-            ipoId: params.ipoId,
-            applicationId: appId,
-            status: 'COMPLETED',
-            createdAt: now, updatedAt: now,
-          }) as number;
-
-          const allocationId = `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-          await db.allocations.add({
-            allocationId, amount: newMoney,
-            ownerId: 'SELF',
-            currentHolderType: 'PERSON',
-            currentHolderId: params.applicantPersonId,
-            purpose: 'IPO_BLOCKED',
-            ipoId: params.ipoId,
-            applicationId: appId,
-            originBankAccountId: params.fundingBankAccountId,
-            status: 'ACTIVE',
-            createdAt: now, updatedAt: now,
-          });
-
-          await db.journeyEvents.add({
-            allocationId, date: params.date,
-            eventType: 'IPO_FUNDED_NEW',
+            event_type: 'IPO_FUNDED_NEW',
             description: `₹${newMoney} sent from bank → friend for ${ipo.symbol}`,
-            transactionId: txId,
-            applicationId: appId,
-            createdAt: now,
+            transaction_id: tx.id,
+            application_id: appId,
+            created_at: now,
           });
-        }
-
-        // Handle existing balance (if any)
-        if (existingMoney > 0) {
-          // Consume UNALLOCATED allocations from this person (FIFO)
-          const unallocatedAllocs = await db.allocations
-            .filter(a =>
-              a.status === 'ACTIVE' &&
-              a.currentHolderType === 'PERSON' &&
-              a.currentHolderId === params.applicantPersonId &&
-              a.purpose === 'UNALLOCATED'
-            )
-            .toArray();
-          unallocatedAllocs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-
-          let remaining = existingMoney;
-          for (const alloc of unallocatedAllocs) {
-            if (remaining <= 0) break;
-            if (alloc.amount <= remaining) {
-              remaining -= alloc.amount;
-              await db.allocations.update(alloc.id!, {
-                purpose: 'IPO_BLOCKED',
-                ipoId: params.ipoId,
-                applicationId: appId,
-                updatedAt: now,
-              });
-              await db.journeyEvents.add({
-                allocationId: alloc.id!, date: params.date,
-                eventType: 'IPO_REUSED_BALANCE',
-                description: `₹${alloc.amount} reused from existing balance for ${ipo.symbol}`,
-                applicationId: appId,
-                createdAt: now,
-              });
-            } else {
-              // Split the allocation
-              await db.allocations.update(alloc.id!, {
-                amount: alloc.amount - remaining,
-                updatedAt: now,
-              });
-              const newAllocId = `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-              await db.allocations.add({
-                allocationId: newAllocId,
-                amount: remaining,
-                ownerId: 'SELF',
-                currentHolderType: 'PERSON',
-                currentHolderId: params.applicantPersonId,
-                purpose: 'IPO_BLOCKED',
-                ipoId: params.ipoId,
-                applicationId: appId,
-                originBankAccountId: alloc.originBankAccountId,
-                status: 'ACTIVE',
-                createdAt: now, updatedAt: now,
-              });
-              await db.journeyEvents.add({
-                allocationId: newAllocId, date: params.date,
-                eventType: 'IPO_REUSED_BALANCE',
-                description: `₹${remaining} reused (split) from existing balance for ${ipo.symbol}`,
-                applicationId: appId,
-                createdAt: now,
-              });
-              remaining = 0;
-            }
-          }
-          if (remaining > 0) {
-            throw new Error(`Insufficient unallocated balance with person. Shortfall: ₹${remaining}`);
-          }
         }
       }
 
-      return appId;
-    });
-  }
+      if (existingMoney > 0) {
+        const { data: unallocatedAllocs } = await supabase
+          .from('allocations')
+          .select('*')
+          .eq('status', 'ACTIVE')
+          .eq('current_holder_type', 'PERSON')
+          .eq('current_holder_id', params.applicantPersonId)
+          .eq('purpose', 'UNALLOCATED')
+          .order('created_at', { ascending: true });
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // STEP 6: PROCESS ALLOTMENT
-  //
-  // OWN_DEMAT:
-  //   - Updates application statuses
-  //   - If allotted: converts IPO_BLOCKED → INVESTED, creates Holding
-  //   - If not allotted: marks allocation as RELEASED (resolves it), no transaction
-  //   - If partial: split — part → INVESTED, part → RELEASED
-  //
-  // FRIEND_DEMAT:
-  //   - If allotted: converts part of IPO_BLOCKED → INVESTED, creates Holding
-  //   - Refund handled per RefundAction array (3-way split supported)
-  //   - RETURN_TO_BANK → real Transaction + resolve allocation
-  //   - RETAIN_WITH_FRIEND → allocation changes purpose to UNALLOCATED
-  //   - REUSE_FOR_IPO → allocation linked to new IPO (still IPO_BLOCKED)
-  // ─────────────────────────────────────────────────────────────────────────
+        let remaining = existingMoney;
+        for (const alloc of unallocatedAllocs || []) {
+          if (remaining <= 0) break;
+          if (alloc.amount <= remaining) {
+            remaining -= alloc.amount;
+            await supabase.from('allocations').update({
+              purpose: 'IPO_BLOCKED',
+              ipo_id: params.ipoId,
+              application_id: appId,
+              updated_at: now,
+            }).eq('id', alloc.id);
+            
+            await supabase.from('journey_events').insert({
+              allocation_id: alloc.allocation_id,
+              date: params.date,
+              event_type: 'IPO_REUSED_BALANCE',
+              description: `₹${alloc.amount} reused from existing balance for ${ipo.symbol}`,
+              application_id: appId,
+              created_at: now,
+            });
+          } else {
+            await supabase.from('allocations').update({
+              amount: alloc.amount - remaining,
+              updated_at: now,
+            }).eq('id', alloc.id);
+
+            const newAllocId = `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            await supabase.from('allocations').insert({
+              allocation_id: newAllocId,
+              amount: remaining,
+              owner_id: 'SELF',
+              current_holder_type: 'PERSON',
+              current_holder_id: params.applicantPersonId,
+              purpose: 'IPO_BLOCKED',
+              ipo_id: params.ipoId,
+              application_id: appId,
+              origin_bank_account_id: alloc.origin_bank_account_id,
+              status: 'ACTIVE',
+              created_at: now,
+              updated_at: now,
+            });
+
+            await supabase.from('journey_events').insert({
+              allocation_id: newAllocId,
+              date: params.date,
+              event_type: 'IPO_REUSED_BALANCE',
+              description: `₹${remaining} reused (split) from existing balance for ${ipo.symbol}`,
+              application_id: appId,
+              created_at: now,
+            });
+            remaining = 0;
+          }
+        }
+        if (remaining > 0) {
+          throw new Error(`Insufficient unallocated balance with person. Shortfall: ₹${remaining}`);
+        }
+      }
+    }
+
+    return appId;
+  }
 
   static async processAllotment(
     applicationId: number,
     allottedLots: number,
-    refundActions?: RefundAction[],   // Only for FRIEND_DEMAT; ignored for OWN_DEMAT
+    refundActions?: RefundAction[],
     allotmentDate?: string
   ): Promise<void> {
-    await db.transaction('rw', [
-      db.applications, db.ipos, db.allocations, db.journeyEvents, db.holdings, db.transactions
-    ], async () => {
-      const app = await db.applications.get(applicationId);
-      if (!app) throw new Error('Application not found');
-      if (app.allotmentStatus !== 'PENDING') throw new Error('Allotment already processed.');
+    const { data: app } = await supabase.from('applications').select('*').eq('id', applicationId).single();
+    if (!app) throw new Error('Application not found');
+    if (app.allotment_status !== 'PENDING') throw new Error('Allotment already processed.');
 
-      const ipo = await db.ipos.get(app.ipoId);
-      if (!ipo) throw new Error('IPO not found');
-      if (allottedLots > app.appliedLots) throw new Error('Allotted lots cannot exceed applied lots.');
+    const { data: ipo } = await supabase.from('ipos').select('*').eq('id', app.ipo_id).single();
+    if (!ipo) throw new Error('IPO not found');
+    if (allottedLots > app.applied_lots) throw new Error('Allotted lots cannot exceed applied lots.');
 
-      const now = new Date().toISOString();
-      const date = allotmentDate ?? now.split('T')[0];
+    const now = new Date().toISOString();
+    const date = allotmentDate ?? now.split('T')[0];
 
-      const investmentAmount = allottedLots * app.lotSizeSnapshot * app.ipoPrice;
-      const refundAmount = app.blockedAmount - investmentAmount;
-      const allotmentStatus: 'FULL' | 'PARTIAL' | 'NIL' =
-        allottedLots === 0 ? 'NIL' :
-        allottedLots === app.appliedLots ? 'FULL' : 'PARTIAL';
+    const investmentAmount = allottedLots * app.lot_size_snapshot * app.ipo_price;
+    const refundAmount = app.blocked_amount - investmentAmount;
+    const allotmentStatus = allottedLots === 0 ? 'NIL' : allottedLots === app.applied_lots ? 'FULL' : 'PARTIAL';
+    const moneyStatus = allottedLots === 0 ? 'RELEASED' : (refundAmount > 0 ? 'PARTIAL' : 'INVESTED');
+    const listingStatus = allottedLots > 0 ? 'LISTING_PENDING' : 'NOT_LISTED';
 
-      // ── Update application ───────────────────────────────────────────────
-      await db.applications.update(applicationId, {
-        allottedLots,
-        investmentAmount,
-        refundAmount,
-        allotmentStatus,
-        moneyStatus: allottedLots === 0 ? 'RELEASED' : (refundAmount > 0 ? 'PARTIAL' : 'INVESTED'),
-        listingStatus: allottedLots > 0 ? 'LISTING_PENDING' : 'NOT_LISTED',
-        updatedAt: now,
+    await supabase.from('applications').update({
+      allotted_lots: allottedLots,
+      investment_amount: investmentAmount,
+      refund_amount: refundAmount,
+      allotment_status: allotmentStatus,
+      money_status: moneyStatus,
+      listing_status: listingStatus,
+      updated_at: now,
+    }).eq('id', applicationId);
+
+    if (allottedLots > 0) {
+      await supabase.from('holdings').insert({
+        ipo_id: app.ipo_id,
+        person_id: app.applicant_person_id,
+        demat_account_id: app.demat_account_id,
+        application_id: applicationId,
+        shares: allottedLots * app.lot_size_snapshot,
+        average_cost: app.ipo_price,
+        current_price: ipo.current_market_price ?? app.ipo_price,
+        current_value: allottedLots * app.lot_size_snapshot * (ipo.current_market_price ?? app.ipo_price),
+        unrealized_profit: allottedLots * app.lot_size_snapshot * ((ipo.current_market_price ?? app.ipo_price) - app.ipo_price),
+        unrealized_roi: ipo.current_market_price
+          ? ((ipo.current_market_price - app.ipo_price) / app.ipo_price) * 100
+          : 0,
+        created_at: now,
+        updated_at: now,
       });
+    }
 
-      // ── Create holding if allotted ────────────────────────────────────────
-      if (allottedLots > 0) {
-        await db.holdings.add({
-          ipoId: app.ipoId,
-          personId: app.applicantPersonId,
-          dematAccountId: app.dematAccountId,
-          applicationId,
-          shares: allottedLots * app.lotSizeSnapshot,
-          averageCost: app.ipoPrice,
-          currentPrice: ipo.currentMarketPrice ?? app.ipoPrice,
-          currentValue: allottedLots * app.lotSizeSnapshot * (ipo.currentMarketPrice ?? app.ipoPrice),
-          unrealizedProfit: allottedLots * app.lotSizeSnapshot * ((ipo.currentMarketPrice ?? app.ipoPrice) - app.ipoPrice),
-          unrealizedROI: ipo.currentMarketPrice
-            ? ((ipo.currentMarketPrice - app.ipoPrice) / app.ipoPrice) * 100
-            : 0,
-          createdAt: now, updatedAt: now,
-        });
-      }
+    const { data: blockedAllocs } = await supabase
+      .from('allocations')
+      .select('*')
+      .eq('application_id', applicationId)
+      .eq('purpose', 'IPO_BLOCKED')
+      .eq('status', 'ACTIVE');
 
-      // ── Process allocations ───────────────────────────────────────────────
-      const blockedAllocs = await db.allocations
-        .filter(a => a.applicationId === applicationId && a.purpose === 'IPO_BLOCKED' && a.status === 'ACTIVE')
-        .toArray();
+    if (app.application_type === 'OWN_DEMAT') {
+      let investRemaining = investmentAmount;
+      let releaseRemaining = refundAmount;
 
-      if (app.applicationType === 'OWN_DEMAT') {
-        // ── OWN_DEMAT: simple block → invested / released ──────────────────
-        let investRemaining = investmentAmount;
-        let releaseRemaining = refundAmount;
+      for (const alloc of blockedAllocs || []) {
+        let allocAmt = alloc.amount;
 
-        for (const alloc of blockedAllocs) {
-          let allocAmt = alloc.amount;
-
-          if (investRemaining > 0) {
-            const investPart = Math.min(allocAmt, investRemaining);
-            if (investPart === allocAmt) {
-              await db.allocations.update(alloc.id!, { purpose: 'INVESTED', updatedAt: now });
-            } else {
-              await db.allocations.update(alloc.id!, { amount: investPart, purpose: 'INVESTED', updatedAt: now });
-              // The remaining part is released
-              await db.allocations.add({
-                ...alloc, id: undefined,
-                amount: allocAmt - investPart,
-                purpose: 'RELEASED',
-                status: 'RESOLVED', // Released immediately
-                createdAt: now, updatedAt: now,
-              });
-              await db.journeyEvents.add({
-                allocationId: alloc.id!, date,
-                eventType: 'BLOCK_RELEASED',
-                description: `₹${allocAmt - investPart} released back to bank (partial allotment - own demat)`,
-                applicationId,
-                createdAt: now,
-              });
-            }
-            await db.journeyEvents.add({
-              allocationId: alloc.id!, date,
-              eventType: 'INVESTED',
-              description: `₹${investPart} converted to investment in ${ipo.symbol}`,
-              applicationId,
-              createdAt: now,
-            });
-            investRemaining -= investPart;
-            allocAmt -= investPart;
-          }
-
-          if (allocAmt > 0 && releaseRemaining > 0) {
-            // This portion is released
-            await db.allocations.update(alloc.id!, { purpose: 'RELEASED', status: 'RESOLVED', updatedAt: now });
-            await db.journeyEvents.add({
-              allocationId: alloc.id!, date,
-              eventType: 'BLOCK_RELEASED',
-              description: `₹${allocAmt} released back to bank (not allotted - own demat)`,
-              applicationId,
-              createdAt: now,
-            });
-            releaseRemaining -= allocAmt;
-          }
-        }
-
-      } else {
-        // ── FRIEND_DEMAT: invested + 3-way refund split ───────────────────
-        // First mark invested portion
-        let investRemaining = investmentAmount;
-        for (const alloc of blockedAllocs) {
-          if (investRemaining <= 0) break;
-          const investPart = Math.min(alloc.amount, investRemaining);
-          if (investPart === alloc.amount) {
-            await db.allocations.update(alloc.id!, { purpose: 'INVESTED', updatedAt: now });
+        if (investRemaining > 0) {
+          const investPart = Math.min(allocAmt, investRemaining);
+          if (investPart === allocAmt) {
+            await supabase.from('allocations').update({ purpose: 'INVESTED', updated_at: now }).eq('id', alloc.id);
           } else {
-            await db.allocations.update(alloc.id!, { amount: investPart, purpose: 'INVESTED', updatedAt: now });
-            await db.allocations.add({
-              ...alloc, id: undefined,
-              amount: alloc.amount - investPart,
-              purpose: 'IPO_BLOCKED', // Still blocked — will be handled by refund actions
-              createdAt: now, updatedAt: now,
+            await supabase.from('allocations').update({ amount: investPart, purpose: 'INVESTED', updated_at: now }).eq('id', alloc.id);
+            await supabase.from('allocations').insert({
+              allocation_id: `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              amount: allocAmt - investPart,
+              owner_id: alloc.owner_id,
+              current_holder_type: alloc.current_holder_type,
+              current_holder_id: alloc.current_holder_id,
+              purpose: 'RELEASED',
+              ipo_id: alloc.ipo_id,
+              application_id: alloc.application_id,
+              origin_bank_account_id: alloc.origin_bank_account_id,
+              status: 'RESOLVED',
+              created_at: now,
+              updated_at: now,
+            });
+            await supabase.from('journey_events').insert({
+              allocation_id: alloc.allocation_id, date,
+              event_type: 'BLOCK_RELEASED',
+              description: `₹${allocAmt - investPart} released back to bank (partial allotment - own demat)`,
+              application_id: applicationId,
+              created_at: now,
             });
           }
-          await db.journeyEvents.add({
-            allocationId: alloc.id!, date,
-            eventType: 'INVESTED',
-            description: `₹${investPart} converted to investment in ${ipo.symbol} (friend demat)`,
-            applicationId,
-            createdAt: now,
+          await supabase.from('journey_events').insert({
+            allocation_id: alloc.allocation_id, date,
+            event_type: 'INVESTED',
+            description: `₹${investPart} converted to investment in ${ipo.symbol}`,
+            application_id: applicationId,
+            created_at: now,
           });
           investRemaining -= investPart;
+          allocAmt -= investPart;
         }
 
-        // Now process refund actions
-        if (refundAmount > 0 && refundActions && refundActions.length > 0) {
-          const totalRefundActions = refundActions.reduce((s, a) => s + a.amount, 0);
-          if (Math.abs(totalRefundActions - refundAmount) > 0.01) {
-            throw new Error(`Refund action amounts (₹${totalRefundActions}) must equal refund amount (₹${refundAmount})`);
-          }
+        if (allocAmt > 0 && releaseRemaining > 0) {
+          await supabase.from('allocations').update({ purpose: 'RELEASED', status: 'RESOLVED', updated_at: now }).eq('id', alloc.id);
+          await supabase.from('journey_events').insert({
+            allocation_id: alloc.allocation_id, date,
+            event_type: 'BLOCK_RELEASED',
+            description: `₹${allocAmt} released back to bank (not allotted - own demat)`,
+            application_id: applicationId,
+            created_at: now,
+          });
+          releaseRemaining -= allocAmt;
+        }
+      }
 
-          // Get remaining IPO_BLOCKED allocations (the refund portion)
-          const refundAllocs = await db.allocations
-            .filter(a => a.applicationId === applicationId && a.purpose === 'IPO_BLOCKED' && a.status === 'ACTIVE')
-            .toArray();
+    } else {
+      let investRemaining = investmentAmount;
+      for (const alloc of blockedAllocs || []) {
+        if (investRemaining <= 0) break;
+        const investPart = Math.min(alloc.amount, investRemaining);
+        if (investPart === alloc.amount) {
+          await supabase.from('allocations').update({ purpose: 'INVESTED', updated_at: now }).eq('id', alloc.id);
+        } else {
+          await supabase.from('allocations').update({ amount: investPart, purpose: 'INVESTED', updated_at: now }).eq('id', alloc.id);
+          await supabase.from('allocations').insert({
+            allocation_id: `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            amount: alloc.amount - investPart,
+            owner_id: alloc.owner_id,
+            current_holder_type: alloc.current_holder_type,
+            current_holder_id: alloc.current_holder_id,
+            purpose: 'IPO_BLOCKED',
+            ipo_id: alloc.ipo_id,
+            application_id: alloc.application_id,
+            origin_bank_account_id: alloc.origin_bank_account_id,
+            status: 'ACTIVE',
+            created_at: now,
+            updated_at: now,
+          });
+        }
+        await supabase.from('journey_events').insert({
+          allocation_id: alloc.allocation_id, date,
+          event_type: 'INVESTED',
+          description: `₹${investPart} converted to investment in ${ipo.symbol} (friend demat)`,
+          application_id: applicationId,
+          created_at: now,
+        });
+        investRemaining -= investPart;
+      }
 
-          for (const action of refundActions) {
-            let actionRemaining = action.amount;
+      if (refundAmount > 0 && refundActions && refundActions.length > 0) {
+        const totalRefundActions = refundActions.reduce((s, a) => s + a.amount, 0);
+        if (Math.abs(totalRefundActions - refundAmount) > 0.01) {
+          throw new Error(`Refund action amounts (₹${totalRefundActions}) must equal refund amount (₹${refundAmount})`);
+        }
 
-            for (const alloc of refundAllocs) {
-              if (actionRemaining <= 0) break;
-              if (alloc.status !== 'ACTIVE') continue;
+        const { data: refundAllocs } = await supabase
+          .from('allocations')
+          .select('*')
+          .eq('application_id', applicationId)
+          .eq('purpose', 'IPO_BLOCKED')
+          .eq('status', 'ACTIVE');
 
-              const chunk = Math.min(alloc.amount, actionRemaining);
+        for (const action of refundActions) {
+          let actionRemaining = action.amount;
 
-              if (action.action === 'RETURN_TO_BANK') {
-                // Real transaction: Friend → My Bank
-                const txId = await db.transactions.add({
-                  transactionType: 'IPO_REFUND',
+          for (const alloc of refundAllocs || []) {
+            if (actionRemaining <= 0) break;
+            
+            const { data: currAlloc } = await supabase.from('allocations').select('*').eq('id', alloc.id).single();
+            if (!currAlloc || currAlloc.status !== 'ACTIVE') continue;
+
+            const chunk = Math.min(currAlloc.amount, actionRemaining);
+
+            if (action.action === 'RETURN_TO_BANK') {
+              const { data: tx } = await supabase.from('transactions').insert({
+                transaction_type: 'IPO_REFUND',
+                amount: chunk,
+                date,
+                from_person_id: app.applicant_person_id,
+                to_bank_account_id: action.targetBankAccountId,
+                ipo_id: app.ipo_id,
+                application_id: applicationId,
+                utr: action.utr,
+                status: 'COMPLETED',
+                created_at: now,
+                updated_at: now,
+              }).select('id').single();
+
+              if (chunk === currAlloc.amount) {
+                await supabase.from('allocations').update({ purpose: 'RELEASED', status: 'RESOLVED', updated_at: now }).eq('id', currAlloc.id);
+              } else {
+                await supabase.from('allocations').update({ amount: currAlloc.amount - chunk, updated_at: now }).eq('id', currAlloc.id);
+                await supabase.from('allocations').insert({
+                  allocation_id: `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
                   amount: chunk,
-                  date,
-                  fromPersonId: app.applicantPersonId,
-                  toBankAccountId: action.targetBankAccountId,
-                  ipoId: app.ipoId,
-                  applicationId,
-                  utr: action.utr,
-                  status: 'COMPLETED',
-                  createdAt: now, updatedAt: now,
-                }) as number;
-
-                // Resolve allocation
-                if (chunk === alloc.amount) {
-                  await db.allocations.update(alloc.id!, { purpose: 'RELEASED', status: 'RESOLVED', updatedAt: now });
-                } else {
-                  await db.allocations.update(alloc.id!, { amount: alloc.amount - chunk, updatedAt: now });
-                  await db.allocations.add({
-                    ...alloc, id: undefined,
-                    amount: chunk,
-                    purpose: 'RELEASED',
-                    status: 'RESOLVED',
-                    createdAt: now, updatedAt: now,
-                  });
-                }
-                await db.journeyEvents.add({
-                  allocationId: alloc.id!, date,
-                  eventType: 'REFUND_RETURNED_TO_BANK',
+                  owner_id: currAlloc.owner_id,
+                  current_holder_type: currAlloc.current_holder_type,
+                  current_holder_id: currAlloc.current_holder_id,
+                  purpose: 'RELEASED',
+                  origin_bank_account_id: currAlloc.origin_bank_account_id,
+                  status: 'RESOLVED',
+                  created_at: now,
+                  updated_at: now,
+                });
+              }
+              if (tx) {
+                await supabase.from('journey_events').insert({
+                  allocation_id: currAlloc.allocation_id, date,
+                  event_type: 'REFUND_RETURNED_TO_BANK',
                   description: `₹${chunk} refund returned to bank`,
-                  transactionId: txId,
-                  applicationId,
-                  createdAt: now,
-                });
-
-              } else if (action.action === 'RETAIN_WITH_FRIEND') {
-                // No transaction — just change purpose to UNALLOCATED
-                if (chunk === alloc.amount) {
-                  await db.allocations.update(alloc.id!, {
-                    purpose: 'UNALLOCATED',
-                    ipoId: undefined,
-                    applicationId: undefined,
-                    updatedAt: now,
-                  });
-                } else {
-                  await db.allocations.update(alloc.id!, { amount: alloc.amount - chunk, updatedAt: now });
-                  await db.allocations.add({
-                    ...alloc, id: undefined,
-                    amount: chunk,
-                    purpose: 'UNALLOCATED',
-                    ipoId: undefined,
-                    applicationId: undefined,
-                    createdAt: now, updatedAt: now,
-                  });
-                }
-                await db.journeyEvents.add({
-                  allocationId: alloc.id!, date,
-                  eventType: 'REFUND_RETAINED',
-                  description: `₹${chunk} refund retained with friend (available for next IPO)`,
-                  applicationId,
-                  createdAt: now,
-                });
-
-              } else if (action.action === 'REUSE_FOR_IPO') {
-                // Internal reuse — link to next IPO (still IPO_BLOCKED)
-                if (chunk === alloc.amount) {
-                  await db.allocations.update(alloc.id!, {
-                    ipoId: action.targetIpoId,
-                    applicationId: undefined, // Will be set when new application is created
-                    updatedAt: now,
-                  });
-                } else {
-                  await db.allocations.update(alloc.id!, { amount: alloc.amount - chunk, updatedAt: now });
-                  await db.allocations.add({
-                    ...alloc, id: undefined,
-                    amount: chunk,
-                    ipoId: action.targetIpoId,
-                    applicationId: undefined,
-                    createdAt: now, updatedAt: now,
-                  });
-                }
-                await db.journeyEvents.add({
-                  allocationId: alloc.id!, date,
-                  eventType: 'REFUND_REUSED',
-                  description: `₹${chunk} refund reused for next IPO (internal allocation)`,
-                  applicationId,
-                  createdAt: now,
+                  transaction_id: tx.id,
+                  application_id: applicationId,
+                  created_at: now,
                 });
               }
 
-              // Mark allocation amount consumed for this action
-              alloc.amount -= chunk;
-              actionRemaining -= chunk;
+            } else if (action.action === 'RETAIN_WITH_FRIEND') {
+              if (chunk === currAlloc.amount) {
+                await supabase.from('allocations').update({
+                  purpose: 'UNALLOCATED',
+                  ipo_id: null,
+                  application_id: null,
+                  updated_at: now,
+                }).eq('id', currAlloc.id);
+              } else {
+                await supabase.from('allocations').update({ amount: currAlloc.amount - chunk, updated_at: now }).eq('id', currAlloc.id);
+                await supabase.from('allocations').insert({
+                  allocation_id: `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                  amount: chunk,
+                  owner_id: currAlloc.owner_id,
+                  current_holder_type: currAlloc.current_holder_type,
+                  current_holder_id: currAlloc.current_holder_id,
+                  purpose: 'UNALLOCATED',
+                  origin_bank_account_id: currAlloc.origin_bank_account_id,
+                  status: 'ACTIVE',
+                  created_at: now,
+                  updated_at: now,
+                });
+              }
+              await supabase.from('journey_events').insert({
+                allocation_id: currAlloc.allocation_id, date,
+                event_type: 'REFUND_RETAINED',
+                description: `₹${chunk} refund retained with friend (available for next IPO)`,
+                application_id: applicationId,
+                created_at: now,
+              });
+
+            } else if (action.action === 'REUSE_FOR_IPO') {
+              if (chunk === currAlloc.amount) {
+                await supabase.from('allocations').update({
+                  ipo_id: action.targetIpoId,
+                  application_id: null,
+                  updated_at: now,
+                }).eq('id', currAlloc.id);
+              } else {
+                await supabase.from('allocations').update({ amount: currAlloc.amount - chunk, updated_at: now }).eq('id', currAlloc.id);
+                await supabase.from('allocations').insert({
+                  allocation_id: `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                  amount: chunk,
+                  owner_id: currAlloc.owner_id,
+                  current_holder_type: currAlloc.current_holder_type,
+                  current_holder_id: currAlloc.current_holder_id,
+                  purpose: 'IPO_BLOCKED',
+                  ipo_id: action.targetIpoId,
+                  origin_bank_account_id: currAlloc.origin_bank_account_id,
+                  status: 'ACTIVE',
+                  created_at: now,
+                  updated_at: now,
+                });
+              }
+              await supabase.from('journey_events').insert({
+                allocation_id: currAlloc.allocation_id, date,
+                event_type: 'REFUND_REUSED',
+                description: `₹${chunk} refund reused for next IPO (internal allocation)`,
+                application_id: applicationId,
+                created_at: now,
+              });
             }
+
+            actionRemaining -= chunk;
           }
         }
       }
-    });
+    }
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // STEP 7: RECEIVE MONEY FROM PERSON (manual return, outside IPO refund)
-  // ─────────────────────────────────────────────────────────────────────────
 
   static async receiveMoneyFromPerson(
     amount: number,
@@ -767,70 +752,62 @@ export class TransactionEngine {
     utr?: string,
     notes?: string
   ): Promise<number> {
-    return await db.transaction('rw', [db.transactions, db.allocations, db.journeyEvents], async () => {
-      if (utr) {
-        const existing = await db.transactions.where('utr').equals(utr).first();
-        if (existing) throw new Error(`Duplicate UTR: ${utr}`);
+    if (utr) {
+      const { data: existing } = await supabase.from('transactions').select('id').eq('utr', utr).single();
+      if (existing) throw new Error(`Duplicate UTR: ${utr}`);
+    }
+
+    const now = new Date().toISOString();
+
+    const { data: unallocated } = await supabase
+      .from('allocations')
+      .select('*')
+      .eq('status', 'ACTIVE')
+      .eq('current_holder_type', 'PERSON')
+      .eq('current_holder_id', personId)
+      .eq('purpose', 'UNALLOCATED')
+      .order('created_at', { ascending: true });
+
+    let amountToReturn = amount;
+    for (const alloc of unallocated || []) {
+      if (amountToReturn <= 0) break;
+      if (alloc.amount <= amountToReturn) {
+        amountToReturn -= alloc.amount;
+        await supabase.from('allocations').update({ status: 'RESOLVED', purpose: 'RELEASED', updated_at: now }).eq('id', alloc.id);
+        await supabase.from('journey_events').insert({
+          allocation_id: alloc.allocation_id, date,
+          event_type: 'RETURNED_TO_BANK',
+          description: `₹${alloc.amount} returned to bank`,
+          created_at: now,
+        });
+      } else {
+        await supabase.from('allocations').update({ amount: alloc.amount - amountToReturn, updated_at: now }).eq('id', alloc.id);
+        await supabase.from('journey_events').insert({
+          allocation_id: alloc.allocation_id, date,
+          event_type: 'RETURNED_TO_BANK',
+          description: `₹${amountToReturn} partially returned to bank`,
+          created_at: now,
+        });
+        amountToReturn = 0;
       }
+    }
 
-      const now = new Date().toISOString();
+    if (amountToReturn > 0) {
+      throw new Error(`Insufficient unallocated funds with person. Shortfall: ₹${amountToReturn}`);
+    }
 
-      // Consume UNALLOCATED allocations FIFO
-      const unallocated = await db.allocations
-        .filter(a =>
-          a.status === 'ACTIVE' &&
-          a.currentHolderType === 'PERSON' &&
-          a.currentHolderId === personId &&
-          a.purpose === 'UNALLOCATED'
-        )
-        .toArray();
-      unallocated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    const { data: tx } = await supabase.from('transactions').insert({
+      transaction_type: 'MONEY_RECEIVED',
+      amount, date,
+      from_person_id: personId,
+      to_bank_account_id: bankAccountId,
+      utr, notes,
+      status: 'COMPLETED',
+      created_at: now, updated_at: now,
+    }).select('id').single();
 
-      let amountToReturn = amount;
-      for (const alloc of unallocated) {
-        if (amountToReturn <= 0) break;
-        if (alloc.amount <= amountToReturn) {
-          amountToReturn -= alloc.amount;
-          await db.allocations.update(alloc.id!, { status: 'RESOLVED', purpose: 'RELEASED', updatedAt: now });
-          await db.journeyEvents.add({
-            allocationId: alloc.id!, date,
-            eventType: 'RETURNED_TO_BANK',
-            description: `₹${alloc.amount} returned to bank`,
-            createdAt: now,
-          });
-        } else {
-          await db.allocations.update(alloc.id!, { amount: alloc.amount - amountToReturn, updatedAt: now });
-          await db.journeyEvents.add({
-            allocationId: alloc.id!, date,
-            eventType: 'RETURNED_TO_BANK',
-            description: `₹${amountToReturn} partially returned to bank`,
-            createdAt: now,
-          });
-          amountToReturn = 0;
-        }
-      }
-
-      if (amountToReturn > 0) {
-        throw new Error(`Insufficient unallocated funds with person. Shortfall: ₹${amountToReturn}`);
-      }
-
-      const txId = await db.transactions.add({
-        transactionType: 'MONEY_RECEIVED',
-        amount, date,
-        fromPersonId: personId,
-        toBankAccountId: bankAccountId,
-        utr, notes,
-        status: 'COMPLETED',
-        createdAt: now, updatedAt: now,
-      });
-
-      return txId as number;
-    });
+    return tx!.id;
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // STEP 8: SELL HOLDING
-  // ─────────────────────────────────────────────────────────────────────────
 
   static async sellHolding(
     holdingId: number,
@@ -841,113 +818,128 @@ export class TransactionEngine {
     date: string,
     utr?: string
   ): Promise<void> {
-    await db.transaction('rw', [db.holdings, db.sales, db.transactions, db.allocations, db.journeyEvents], async () => {
-      const holding = await db.holdings.get(holdingId);
-      if (!holding) throw new Error('Holding not found');
-      if (sharesToSell > holding.shares) throw new Error('Cannot sell more shares than held.');
+    const { data: holding } = await supabase.from('holdings').select('*').eq('id', holdingId).single();
+    if (!holding) throw new Error('Holding not found');
+    if (sharesToSell > holding.shares) throw new Error('Cannot sell more shares than held.');
 
-      const costOfSold = sharesToSell * holding.averageCost;
-      const grossSale = sharesToSell * sellPrice;
-      const netSale = grossSale - charges;
-      const realizedPnL = netSale - costOfSold;
-      const now = new Date().toISOString();
+    const costOfSold = sharesToSell * holding.average_cost;
+    const grossSale = sharesToSell * sellPrice;
+    const netSale = grossSale - charges;
+    const realizedPnL = netSale - costOfSold;
+    const now = new Date().toISOString();
 
-      // Record sale
-      await db.sales.add({
-        holdingId, sharesSold: sharesToSell, sellPrice, charges, realizedPnL,
-        date, returnedToBankAccountId: bankAccountId, utr,
-        createdAt: now, updatedAt: now,
-      });
+    await supabase.from('sales').insert({
+      holding_id: holdingId,
+      ipo_id: holding.ipo_id,
+      person_id: holding.person_id,
+      shares_sold: sharesToSell,
+      sell_price: sellPrice,
+      charges,
+      realized_pnl: realizedPnL,
+      date,
+      returned_to_bank_account_id: bankAccountId,
+      utr,
+      created_at: now,
+      updated_at: now,
+    });
 
-      // Update or remove holding
-      if (sharesToSell === holding.shares) {
-        await db.holdings.delete(holdingId);
-      } else {
-        const newShares = holding.shares - sharesToSell;
-        await db.holdings.update(holdingId, {
-          shares: newShares,
-          currentValue: newShares * holding.currentPrice,
-          unrealizedProfit: newShares * (holding.currentPrice - holding.averageCost),
-          updatedAt: now,
-        });
-      }
+    if (sharesToSell === holding.shares) {
+      await supabase.from('holdings').delete().eq('id', holdingId);
+    } else {
+      const newShares = holding.shares - sharesToSell;
+      await supabase.from('holdings').update({
+        shares: newShares,
+        current_value: newShares * holding.current_price,
+        unrealized_profit: newShares * (holding.current_price - holding.average_cost),
+        updated_at: now,
+      }).eq('id', holdingId);
+    }
 
-      // Real transaction: money hits bank (sale proceeds)
-      const txId = await db.transactions.add({
-        transactionType: 'IPO_SELL',
+    const { data: person } = await supabase.from('people').select('*').eq('id', holding.person_id).single();
+    if (!person) throw new Error('Person not found');
+    
+    const isSelf = person.is_self;
+    if (isSelf && !bankAccountId) throw new Error('Bank account is required for own holdings.');
+
+    let txId: number | undefined;
+
+    if (isSelf) {
+      const { data: tx } = await supabase.from('transactions').insert({
+        transaction_type: 'IPO_SELL',
         amount: netSale,
         date,
-        toBankAccountId: bankAccountId,
-        ipoId: holding.ipoId,
+        to_bank_account_id: bankAccountId,
+        ipo_id: holding.ipo_id,
         utr,
         notes: `Sold ${sharesToSell} shares. Realized P&L: ₹${realizedPnL}`,
         status: 'COMPLETED',
-        createdAt: now, updatedAt: now,
-      }) as number;
+        created_at: now, updated_at: now,
+      }).select('id').single();
+      txId = tx?.id;
+    } else {
+      await supabase.from('allocations').insert({
+        allocation_id: `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        amount: netSale,
+        owner_id: 'SELF',
+        current_holder_type: 'PERSON',
+        current_holder_id: person.id,
+        purpose: 'UNALLOCATED',
+        status: 'ACTIVE',
+        created_at: now, updated_at: now,
+      });
+    }
 
-      // Resolve INVESTED allocations
-      const investedAllocs = await db.allocations
-        .filter(a =>
-          a.status === 'ACTIVE' &&
-          a.purpose === 'INVESTED' &&
-          a.ipoId === holding.ipoId &&
-          a.currentHolderId === holding.personId
-        )
-        .toArray();
+    const { data: investedAllocs } = await supabase
+      .from('allocations')
+      .select('*')
+      .eq('status', 'ACTIVE')
+      .eq('purpose', 'INVESTED')
+      .eq('ipo_id', holding.ipo_id)
+      .eq('current_holder_id', holding.person_id);
 
-      let costRemaining = costOfSold;
-      for (const alloc of investedAllocs) {
-        if (costRemaining <= 0) break;
-        if (alloc.amount <= costRemaining) {
-          costRemaining -= alloc.amount;
-          await db.allocations.update(alloc.id!, { status: 'RESOLVED', updatedAt: now });
-          await db.journeyEvents.add({
-            allocationId: alloc.id!, date,
-            eventType: 'INVESTMENT_SOLD',
-            description: `Investment sold. Proceeds: ₹${netSale}. P&L: ₹${realizedPnL}`,
-            transactionId: txId,
-            createdAt: now,
-          });
-        } else {
-          await db.allocations.update(alloc.id!, { amount: alloc.amount - costRemaining, updatedAt: now });
-          await db.journeyEvents.add({
-            allocationId: alloc.id!, date,
-            eventType: 'INVESTMENT_PARTIALLY_SOLD',
-            description: `Partial investment sold. ₹${costRemaining} cost resolved.`,
-            transactionId: txId,
-            createdAt: now,
-          });
-          costRemaining = 0;
-        }
+    let costRemaining = costOfSold;
+    for (const alloc of investedAllocs || []) {
+      if (costRemaining <= 0) break;
+      if (alloc.amount <= costRemaining) {
+        costRemaining -= alloc.amount;
+        await supabase.from('allocations').update({ status: 'RESOLVED', updated_at: now }).eq('id', alloc.id);
+        await supabase.from('journey_events').insert({
+          allocation_id: alloc.allocation_id, date,
+          event_type: 'INVESTMENT_SOLD',
+          description: `Investment sold. Proceeds: ₹${netSale}. P&L: ₹${realizedPnL}`,
+          transaction_id: txId,
+          created_at: now,
+        });
+      } else {
+        await supabase.from('allocations').update({ amount: alloc.amount - costRemaining, updated_at: now }).eq('id', alloc.id);
+        await supabase.from('journey_events').insert({
+          allocation_id: alloc.allocation_id, date,
+          event_type: 'INVESTMENT_PARTIALLY_SOLD',
+          description: `Partial investment sold. ₹${costRemaining} cost resolved.`,
+          transaction_id: txId,
+          created_at: now,
+        });
+        costRemaining = 0;
       }
-    });
+    }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // STEP 9: UPDATE HOLDING PRICES (for P&L tracking)
-  // ─────────────────────────────────────────────────────────────────────────
-
   static async updateHoldingPrice(holdingId: number, newPrice: number): Promise<void> {
-    const holding = await db.holdings.get(holdingId);
+    const { data: holding } = await supabase.from('holdings').select('*').eq('id', holdingId).single();
     if (!holding) throw new Error('Holding not found');
 
     const currentValue = holding.shares * newPrice;
-    const unrealizedProfit = currentValue - (holding.shares * holding.averageCost);
-    const unrealizedROI = ((newPrice - holding.averageCost) / holding.averageCost) * 100;
+    const unrealizedProfit = currentValue - (holding.shares * holding.average_cost);
+    const unrealizedROI = ((newPrice - holding.average_cost) / holding.average_cost) * 100;
 
-    await db.holdings.update(holdingId, {
-      currentPrice: newPrice,
-      currentValue,
-      unrealizedProfit,
-      unrealizedROI,
-      updatedAt: new Date().toISOString(),
-    });
+    await supabase.from('holdings').update({
+      current_price: newPrice,
+      current_value: currentValue,
+      unrealized_profit: unrealizedProfit,
+      unrealized_roi: unrealizedROI,
+      updated_at: new Date().toISOString(),
+    }).eq('id', holdingId);
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // STEP 10: RECLASSIFY ALLOCATION MONEY TYPE (helper)
-  // Change purpose of an allocation (e.g. UNALLOCATED → IPO_BLOCKED when reusing)
-  // ─────────────────────────────────────────────────────────────────────────
 
   static async reclassifyAllocation(
     allocationId: string,
@@ -955,23 +947,23 @@ export class TransactionEngine {
     newIpoId?: number,
     newApplicationId?: number
   ): Promise<void> {
-    const alloc = await db.allocations.where('allocationId').equals(allocationId).first();
+    const { data: alloc } = await supabase.from('allocations').select('*').eq('allocation_id', allocationId).single();
     if (!alloc) throw new Error('Allocation not found');
 
-    await db.allocations.update(alloc.id!, {
+    await supabase.from('allocations').update({
       purpose: newPurpose,
-      ipoId: newIpoId,
-      applicationId: newApplicationId,
-      updatedAt: new Date().toISOString(),
-    });
+      ipo_id: newIpoId,
+      application_id: newApplicationId,
+      updated_at: new Date().toISOString(),
+    }).eq('id', alloc.id);
 
-    await db.journeyEvents.add({
-      allocationId,
+    await supabase.from('journey_events').insert({
+      allocation_id: allocationId,
       date: new Date().toISOString().split('T')[0],
-      eventType: 'RECLASSIFIED',
+      event_type: 'RECLASSIFIED',
       description: `Allocation reclassified to ${newPurpose}`,
-      applicationId: newApplicationId,
-      createdAt: new Date().toISOString(),
+      application_id: newApplicationId,
+      created_at: new Date().toISOString(),
     });
   }
 }

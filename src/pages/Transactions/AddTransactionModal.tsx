@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../../db/schema';
+import React, { useState, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '../../lib/supabase';
 import { TransactionEngine } from '../../engine/TransactionEngine';
 import { Modal } from '../../components/ui/Modal';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { ArrowUpRight, ArrowDownLeft, RefreshCcw, Landmark, User, CheckCircle2 } from 'lucide-react';
+import { useToast } from '../../hooks/useToast';
+import { mapBankAccount, mapPerson } from '../../lib/mappers';
 
 interface Props {
   isOpen: boolean;
@@ -13,6 +15,9 @@ interface Props {
 }
 
 export const AddTransactionModal: React.FC<Props> = ({ isOpen, onClose }) => {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const submitting = useRef(false);
   const [txType, setTxType] = useState<'MONEY_SENT' | 'MONEY_RECEIVED' | 'SELF_TRANSFER'>('MONEY_SENT');
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -24,9 +29,21 @@ export const AddTransactionModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const [personId, setPersonId] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  const banks = useLiveQuery(() => db.bankAccounts.filter(b => b.isActive).toArray(), []);
-  // Exclude self since sending to self is practically self-transfer or own demat logic
-  const people = useLiveQuery(() => db.people.filter(p => p.isActive && !p.isSelf).toArray(), []); 
+  const { data: banks } = useQuery({
+    queryKey: ['banksActive'],
+    queryFn: async () => {
+      const { data } = await supabase.from('bank_accounts').select('*').eq('is_active', true);
+      return (data || []).map(mapBankAccount);
+    }
+  });
+
+  const { data: people } = useQuery({
+    queryKey: ['peopleActiveNotSelf'],
+    queryFn: async () => {
+      const { data } = await supabase.from('people').select('*').eq('is_active', true).eq('is_self', false);
+      return (data || []).map(mapPerson);
+    }
+  });
 
   const resetForm = () => {
     setTxType('MONEY_SENT');
@@ -47,6 +64,8 @@ export const AddTransactionModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!amount || Number(amount) <= 0) return;
+    if (submitting.current) return;
+    submitting.current = true;
     setLoading(true);
     try {
       if (txType === 'MONEY_SENT') {
@@ -59,11 +78,14 @@ export const AddTransactionModal: React.FC<Props> = ({ isOpen, onClose }) => {
         if (!fromBankId || !toBankId) throw new Error("Select both sending and receiving banks.");
         await TransactionEngine.selfTransfer(fromBankId, toBankId, Number(amount), date, utr, notes);
       }
+      toast.success('Transaction saved successfully.', 'Transaction Added');
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
       handleClose();
     } catch (err: any) {
-      alert("Error: " + err.message);
+      toast.error(err.message ?? 'Failed to save transaction.', 'Transaction Error');
     } finally {
       setLoading(false);
+      submitting.current = false;
     }
   };
 
@@ -79,7 +101,6 @@ export const AddTransactionModal: React.FC<Props> = ({ isOpen, onClose }) => {
     <Modal isOpen={isOpen} onClose={handleClose} title="Add Manual Transaction">
       <form onSubmit={handleSubmit} className="space-y-6">
         
-        {/* Transaction Type Selector */}
         <div className="space-y-2">
           <label className="text-sm font-medium text-text-primary">Transaction Type</label>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -105,9 +126,7 @@ export const AddTransactionModal: React.FC<Props> = ({ isOpen, onClose }) => {
           </div>
         </div>
 
-        {/* Dynamic Fields based on Type */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 p-4 bg-bg-secondary/30 rounded-xl border border-black/5">
-          {/* MONEY_SENT: From Bank -> To Person */}
           {txType === 'MONEY_SENT' && (
             <>
               <div className="space-y-1.5">
@@ -135,7 +154,6 @@ export const AddTransactionModal: React.FC<Props> = ({ isOpen, onClose }) => {
             </>
           )}
 
-          {/* MONEY_RECEIVED: From Person -> To Bank */}
           {txType === 'MONEY_RECEIVED' && (
             <>
               <div className="space-y-1.5">
@@ -163,7 +181,6 @@ export const AddTransactionModal: React.FC<Props> = ({ isOpen, onClose }) => {
             </>
           )}
 
-          {/* SELF_TRANSFER: From Bank -> To Bank */}
           {txType === 'SELF_TRANSFER' && (
             <>
               <div className="space-y-1.5">
@@ -192,7 +209,6 @@ export const AddTransactionModal: React.FC<Props> = ({ isOpen, onClose }) => {
           )}
         </div>
 
-        {/* Common Fields */}
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-primary">Amount (₹)</label>
@@ -228,7 +244,6 @@ export const AddTransactionModal: React.FC<Props> = ({ isOpen, onClose }) => {
           </div>
         </div>
 
-        {/* Actions */}
         <div className="flex items-center justify-end gap-3 pt-4 border-t border-black/5 mt-6">
           <Button type="button" variant="ghost" onClick={handleClose}>Cancel</Button>
           <Button type="submit" variant="primary" disabled={loading || !isFormValid()}>

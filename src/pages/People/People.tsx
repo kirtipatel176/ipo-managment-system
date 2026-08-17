@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Filter, User, Edit2, Trash2 } from 'lucide-react';
-import { db } from '../../db/schema';
+import { supabase } from '../../lib/supabase';
+import { mapPerson, mapApplication, mapAllocation, mapTransaction } from '../../lib/mappers';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { Input } from '../../components/ui/Input';
@@ -11,15 +12,19 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { motion } from 'framer-motion';
 import { Pagination } from '../../components/ui/Pagination';
 import { PersonDetailsModal } from './PersonDetailsModal';
+import { useAuth } from '../../contexts/AuthContext';
+import { BlurOverlay } from '../../components/ui/BlurOverlay';
 
 export const People: React.FC = () => {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
-  
+
   const [newPerson, setNewPerson] = useState({
     fullName: '',
     panNumber: '',
@@ -42,46 +47,99 @@ export const People: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const peopleData = useLiveQuery(async () => {
-    const peopleList = await db.people.filter(p => p.isActive).toArray();
-    
-    const computedList = await Promise.all(peopleList.map(async p => {
-      // Applications where this person is the applicant
-      const applications = await db.applications.where('applicantPersonId').equals(p.id!).toArray();
-      const applicationsCount = applications.length;
-      
-      // Demat accounts for this person
-      const dematAccounts = await db.dematAccounts.where('holderPersonId').equals(p.id!).filter(d => d.isActive).toArray();
+  const { data: peopleData, isLoading } = useQuery({
+    queryKey: ['peopleList'],
+    queryFn: async () => {
+      const [
+        { data: pData },
+        { data: appData },
+        { data: dData },
+        { data: aData },
+        { data: tData }
+      ] = await Promise.all([
+        supabase.from('people').select('*').eq('is_active', true),
+        supabase.from('applications').select('*'),
+        supabase.from('demat_accounts').select('*').eq('is_active', true),
+        supabase.from('allocations').select('*').eq('status', 'ACTIVE'),
+        supabase.from('transactions').select('*').eq('status', 'COMPLETED')
+      ]);
 
-      // Active allocations
-      const allocs = await db.allocations
-        .filter(a => a.status === 'ACTIVE' && a.currentHolderType === 'PERSON' && a.currentHolderId === p.id!)
-        .toArray();
-      const ipoBlocked  = allocs.filter(a => a.purpose === 'IPO_BLOCKED').reduce((s, a) => s + a.amount, 0);
-      const unallocated = allocs.filter(a => a.purpose === 'UNALLOCATED').reduce((s, a) => s + a.amount, 0);
-      const invested    = allocs.filter(a => a.purpose === 'INVESTED').reduce((s, a) => s + a.amount, 0);
-      const currentlyHeld = ipoBlocked + unallocated + invested;
+      const peopleList = (pData || []).map(mapPerson);
+      const apps = (appData || []).map(mapApplication);
+      const demats = dData || [];
+      const allocs = (aData || []).map(mapAllocation);
+      const txs = (tData || []).map(mapTransaction);
 
-      // Transactions
-      const sentTxs   = await db.transactions.filter(t => t.status === 'COMPLETED' && t.toPersonId === p.id! && !!t.fromBankAccountId).toArray();
-      const returnTxs = await db.transactions.filter(t => t.status === 'COMPLETED' && t.fromPersonId === p.id! && !!t.toBankAccountId).toArray();
-      const totalSent     = sentTxs.reduce((s, t) => s + t.amount, 0);
-      const moneyComeBack = returnTxs.reduce((s, t) => s + t.amount, 0);
-      const pending = currentlyHeld;
-      const status = pending === 0 ? 'Settled' : 'Active';
+      return peopleList.map(p => {
+        const applicationsCount = apps.filter(a => a.applicantPersonId === p.id).length;
+        const dematCount = demats.filter(d => d.holder_person_id === p.id).length;
 
-      return {
-        ...p,
-        applicationsCount,
-        dematCount: dematAccounts.length,
-        totalSent, moneyComeBack,
-        ipoBlocked, unallocated, invested, currentlyHeld,
-        pending, status,
-      };
-    }));
+        const pAllocs = allocs.filter(a => a.currentHolderType === 'PERSON' && a.currentHolderId === p.id);
+        const ipoBlocked = pAllocs.filter(a => a.purpose === 'IPO_BLOCKED').reduce((s, a) => s + a.amount, 0);
+        const unallocated = pAllocs.filter(a => a.purpose === 'UNALLOCATED').reduce((s, a) => s + a.amount, 0);
+        const invested = pAllocs.filter(a => a.purpose === 'INVESTED').reduce((s, a) => s + a.amount, 0);
+        const currentlyHeld = ipoBlocked + unallocated + invested;
 
-    return computedList;
-  }, []);
+        const sentTxs = txs.filter(t => t.toPersonId === p.id && !!t.fromBankAccountId);
+        const returnTxs = txs.filter(t => t.fromPersonId === p.id && !!t.toBankAccountId);
+        const totalSent = sentTxs.reduce((s, t) => s + t.amount, 0);
+        const moneyComeBack = returnTxs.reduce((s, t) => s + t.amount, 0);
+        
+        const pending = currentlyHeld;
+        const status = pending === 0 ? 'Settled' : 'Active';
+
+        return {
+          ...p,
+          applicationsCount,
+          dematCount,
+          totalSent, moneyComeBack,
+          ipoBlocked, unallocated, invested, currentlyHeld,
+          pending, status,
+        };
+      });
+    }
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: async (person: any) => {
+      const now = new Date().toISOString();
+      if (person.id) {
+        await supabase.from('people').update({
+          full_name: person.fullName,
+          pan_number: person.panNumber,
+          is_self: person.isSelf,
+          updated_at: now
+        }).eq('id', person.id);
+      } else {
+        await supabase.from('people').insert({
+          full_name: person.fullName,
+          pan_number: person.panNumber,
+          is_self: person.isSelf,
+          is_active: true,
+          created_at: now,
+          updated_at: now
+        });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['peopleList'] });
+      setIsModalOpen(false);
+      setEditingId(null);
+      setNewPerson({ fullName: '', panNumber: '', isSelf: false });
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await supabase.from('people').update({
+        is_active: false,
+        updated_at: new Date().toISOString()
+      }).eq('id', id);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['peopleList'] });
+    }
+  });
 
   const filteredPeople = peopleData?.filter(person => {
     if (!searchTerm) return true;
@@ -98,42 +156,28 @@ export const People: React.FC = () => {
     setCurrentPage(1);
   }, [searchTerm]);
 
-  const handleSavePerson = async (e: React.FormEvent) => {
+  const handleSavePerson = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPerson.fullName) return;
-
-    if (editingId) {
-      await db.people.update(editingId, {
-        fullName: newPerson.fullName,
-        panNumber: newPerson.panNumber,
-        isSelf: newPerson.isSelf,
-        updatedAt: new Date().toISOString()
-      });
-    } else {
-      await db.people.add({
-        ...newPerson,
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-    }
-
-    setIsModalOpen(false);
-    setEditingId(null);
-    setNewPerson({ fullName: '', panNumber: '', isSelf: false });
+    saveMutation.mutate({ ...newPerson, id: editingId });
   };
 
-  const handleDeletePerson = async (id: number) => {
+  const handleDeletePerson = (id: number) => {
     if (window.confirm('Are you sure you want to delete this person?')) {
-      await db.people.update(id, {
-        isActive: false,
-        updatedAt: new Date().toISOString()
-      });
+      deleteMutation.mutate(id);
     }
   };
 
-  const formatCurrency = (val: number = 0) => 
+  const formatCurrency = (val: number = 0) =>
     new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(val);
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full w-full items-center justify-center py-20">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent-blue/20 border-t-accent-blue" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 pb-10">
@@ -143,16 +187,16 @@ export const People: React.FC = () => {
           <p className="mt-1 text-text-secondary">Manage friends and their allocated IPO balances.</p>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="primary" icon={<Plus size={16} />} onClick={openAddModal}>Add Person</Button>
+          <Button variant="primary" icon={<Plus size={16} />} onClick={openAddModal} disabled={!user}>Add Person</Button>
         </div>
       </div>
 
       <Card noPadding className="overflow-hidden">
         <div className="flex flex-col gap-4 border-b border-black/5 p-4 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-1 items-center gap-3">
-            <Input 
-              icon={<Search size={16} />} 
-              placeholder="Search Name, PAN, Demat ID..." 
+            <Input
+              icon={<Search size={16} />}
+              placeholder="Search Name, PAN, Demat ID..."
               className="max-w-md"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -183,7 +227,7 @@ export const People: React.FC = () => {
               </TableRow>
             )}
             {paginatedPeople.map((person, i) => (
-              <motion.tr 
+              <motion.tr
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.2, delay: i * 0.02 }}
@@ -206,28 +250,26 @@ export const People: React.FC = () => {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <div className="font-mono text-xs text-text-primary">{person.panNumber || '—'}</div>
+                  <BlurOverlay blurLevel="blur-sm">
+                    <div className="font-mono text-xs text-text-primary">{person.panNumber || '—'}</div>
+                  </BlurOverlay>
                   <div className="text-xs text-text-tertiary mt-0.5">{(person as any).dematCount ?? 0} demat account{((person as any).dematCount ?? 0) !== 1 ? 's' : ''}</div>
                 </TableCell>
-                {/* Total Sent */}
                 <TableCell className="text-right">
                   <span className="font-medium text-text-primary">
                     {person.totalSent > 0 ? formatCurrency(person.totalSent) : <span className="text-text-tertiary">—</span>}
                   </span>
                 </TableCell>
-                {/* Money Come Back */}
                 <TableCell className="text-right">
                   <span className="font-medium text-accent-green">
                     {person.moneyComeBack > 0 ? formatCurrency(person.moneyComeBack) : <span className="text-text-tertiary">—</span>}
                   </span>
                 </TableCell>
-                {/* IPO Blocked */}
                 <TableCell className="text-right">
                   <span className={`font-medium ${person.ipoBlocked > 0 ? 'text-accent-orange' : 'text-text-tertiary'}`}>
                     {person.ipoBlocked > 0 ? formatCurrency(person.ipoBlocked) : '—'}
                   </span>
                 </TableCell>
-                {/* Pending */}
                 <TableCell className="text-right">
                   {person.pending > 0 ? (
                     <span className="font-bold text-accent-red">{formatCurrency(person.pending)}</span>
@@ -235,7 +277,6 @@ export const People: React.FC = () => {
                     <span className="text-text-tertiary">₹0</span>
                   )}
                 </TableCell>
-                {/* Status */}
                 <TableCell className="text-center">
                   <Badge variant={person.status === 'Active' ? 'warning' : 'success'}>
                     {person.status === 'Active' ? 'Pending' : 'Settled'}
@@ -243,17 +284,19 @@ export const People: React.FC = () => {
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); openEditModal(person); }}
-                      className="text-text-tertiary hover:text-accent-blue transition-colors h-8 w-8 flex items-center justify-center rounded-full hover:bg-accent-blue/10"
-                      title="Edit Person"
+                    <button
+                      onClick={(e) => { e.stopPropagation(); if (user) openEditModal(person); }}
+                      className={`h-8 w-8 flex items-center justify-center rounded-full transition-colors ${user ? 'text-text-tertiary hover:text-accent-blue hover:bg-accent-blue/10' : 'text-text-tertiary/30 cursor-not-allowed'}`}
+                      title={user ? "Edit Person" : "Login to Edit"}
+                      disabled={!user}
                     >
                       <Edit2 size={16} />
                     </button>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handleDeletePerson(person.id!); }}
-                      className="text-text-tertiary hover:text-accent-red transition-colors h-8 w-8 flex items-center justify-center rounded-full hover:bg-accent-red/10"
-                      title="Delete Person"
+                    <button
+                      onClick={(e) => { e.stopPropagation(); if (user) handleDeletePerson(person.id!); }}
+                      className={`h-8 w-8 flex items-center justify-center rounded-full transition-colors ${user ? 'text-text-tertiary hover:text-accent-red hover:bg-accent-red/10' : 'text-text-tertiary/30 cursor-not-allowed'}`}
+                      title={user ? "Delete Person" : "Login to Delete"}
+                      disabled={!user}
                     >
                       <Trash2 size={16} />
                     </button>
@@ -263,7 +306,7 @@ export const People: React.FC = () => {
             ))}
           </TableBody>
         </Table>
-        <Pagination 
+        <Pagination
           currentPage={currentPage}
           pageSize={pageSize}
           totalItems={filteredPeople.length}
@@ -275,19 +318,19 @@ export const People: React.FC = () => {
         <form onSubmit={handleSavePerson} className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-primary">Full Name</label>
-            <Input 
+            <Input
               icon={<User size={16} />}
-              value={newPerson.fullName} 
-              onChange={e => setNewPerson({...newPerson, fullName: e.target.value})}
+              value={newPerson.fullName}
+              onChange={e => setNewPerson({ ...newPerson, fullName: e.target.value })}
               required
               placeholder="e.g. Ashish Patel"
             />
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-text-primary">PAN Card (Optional)</label>
-            <Input 
-              value={newPerson.panNumber} 
-              onChange={e => setNewPerson({...newPerson, panNumber: e.target.value})}
+            <Input
+              value={newPerson.panNumber}
+              onChange={e => setNewPerson({ ...newPerson, panNumber: e.target.value })}
               style={{ textTransform: 'uppercase' }}
               placeholder="ABCDE1234F"
             />
@@ -297,25 +340,27 @@ export const People: React.FC = () => {
               type="checkbox"
               id="isSelf"
               checked={newPerson.isSelf}
-              onChange={e => setNewPerson({...newPerson, isSelf: e.target.checked})}
+              onChange={e => setNewPerson({ ...newPerson, isSelf: e.target.checked })}
               className="rounded"
             />
             <label htmlFor="isSelf" className="text-sm text-text-primary cursor-pointer">
               This is me (Self) — own money, own Demat applications
             </label>
           </div>
-          
+
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-black/5 mt-6">
             <Button type="button" variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-            <Button type="submit" variant="primary">Save Person</Button>
+            <Button type="submit" variant="primary" disabled={saveMutation.isPending}>
+              {saveMutation.isPending ? 'Saving...' : 'Save Person'}
+            </Button>
           </div>
         </form>
       </Modal>
 
-      <PersonDetailsModal 
-        isOpen={selectedPersonId !== null} 
-        onClose={() => setSelectedPersonId(null)} 
-        personId={selectedPersonId} 
+      <PersonDetailsModal
+        isOpen={selectedPersonId !== null}
+        onClose={() => setSelectedPersonId(null)}
+        personId={selectedPersonId}
       />
     </div>
   );
