@@ -171,7 +171,7 @@ export const Transactions: React.FC = () => {
             <Input
               icon={<Search size={16} />}
               placeholder="Search UTR, Person, IPO, Amount..."
-              className="max-w-md"
+              className="w-full md:max-w-md"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -202,9 +202,9 @@ export const Transactions: React.FC = () => {
           <TableHeader>
             <TableRow>
               <TableHead>Date & UTR</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>From &rarr; To</TableHead>
-              <TableHead>IPO</TableHead>
+              <TableHead className="hidden md:table-cell">Type</TableHead>
+              <TableHead className="hidden sm:table-cell">From &rarr; To</TableHead>
+              <TableHead className="hidden md:table-cell">IPO</TableHead>
               <TableHead className="text-right">Amount</TableHead>
               <TableHead>Status</TableHead>
               <TableHead></TableHead>
@@ -231,7 +231,7 @@ export const Transactions: React.FC = () => {
                   <div className="font-medium text-text-primary">{new Date(tx.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</div>
                   <div className="font-mono text-xs text-text-tertiary">{tx.utr || '—'}</div>
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden md:table-cell">
                   <div className="flex items-center gap-2">
                     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-bg-secondary">
                       {getTypeIcon(tx.transactionType)}
@@ -241,14 +241,14 @@ export const Transactions: React.FC = () => {
                     </span>
                   </div>
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden sm:table-cell">
                   <div className="flex items-center gap-2 text-sm">
                     <span className="font-medium text-text-primary">{tx.fromName}</span>
                     <span className="text-text-tertiary">&rarr;</span>
                     <span className="font-medium text-text-primary">{tx.toName}</span>
                   </div>
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden md:table-cell">
                   <span className="text-sm text-text-secondary">{tx.ipoName}</span>
                 </TableCell>
                 <TableCell className="text-right">

@@ -236,7 +236,7 @@ export const DematAccounts: React.FC = () => {
           <Input
             icon={<Search size={16} />}
             placeholder="Search by person, broker, demat ID..."
-            className="max-w-md"
+            className="w-full sm:max-w-md"
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
           />
@@ -247,11 +247,11 @@ export const DematAccounts: React.FC = () => {
             <TableRow>
               <TableHead>Account Holder</TableHead>
               <TableHead>Broker</TableHead>
-              <TableHead>Demat ID</TableHead>
-              <TableHead className="text-center">Applications</TableHead>
-              <TableHead className="text-center">Holdings</TableHead>
-              <TableHead className="text-right">Invested</TableHead>
-              <TableHead className="text-right">Current Value</TableHead>
+              <TableHead className="hidden lg:table-cell">Demat ID</TableHead>
+              <TableHead className="text-center hidden md:table-cell">Applications</TableHead>
+              <TableHead className="text-center hidden md:table-cell">Holdings</TableHead>
+              <TableHead className="text-right hidden lg:table-cell">Invested</TableHead>
+              <TableHead className="text-right hidden lg:table-cell">Current Value</TableHead>
               <TableHead className="text-right">Unrealized P&L</TableHead>
               <TableHead></TableHead>
             </TableRow>
@@ -290,34 +290,28 @@ export const DematAccounts: React.FC = () => {
                     {d.brokerName}
                   </span>
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden lg:table-cell">
                   <BlurOverlay blurLevel="blur-sm">
                     <span className="font-mono text-xs text-text-primary">{d.dematId ?? '—'}</span>
                   </BlurOverlay>
                 </TableCell>
-                <TableCell className="text-center">
+                <TableCell className="text-center hidden md:table-cell">
                   <div className="text-sm font-medium text-text-primary">{d.appliedCount}</div>
                   {d.allottedCount > 0 && (
-                    <div className="text-xs text-accent-green">{d.allottedCount} allotted</div>
+                    <div className="text-xs text-accent-green mt-0.5">{d.allottedCount} allotted</div>
                   )}
                 </TableCell>
-                <TableCell className="text-center">
-                  <span className={`text-sm font-medium ${d.activeHoldings > 0 ? 'text-accent-green' : 'text-text-tertiary'}`}>
-                    {d.activeHoldings}
-                  </span>
+                <TableCell className="text-center hidden md:table-cell">
+                  <div className="text-sm font-medium text-text-primary">{d.activeHoldings}</div>
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-right hidden lg:table-cell">
                   <BlurOverlay blurLevel="blur-sm">
-                    <span className="text-sm font-medium text-text-primary">
-                      {d.totalInvested > 0 ? fmt(d.totalInvested) : <span className="text-text-tertiary">—</span>}
-                    </span>
+                    <span className="font-medium text-text-primary">{d.totalInvested > 0 ? fmt(d.totalInvested) : '—'}</span>
                   </BlurOverlay>
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-right hidden lg:table-cell">
                   <BlurOverlay blurLevel="blur-sm">
-                    <span className="text-sm font-medium text-text-primary">
-                      {d.currentValue > 0 ? fmt(d.currentValue) : <span className="text-text-tertiary">—</span>}
-                    </span>
+                    <span className="font-medium text-text-primary">{d.currentValue > 0 ? fmt(d.currentValue) : '—'}</span>
                   </BlurOverlay>
                 </TableCell>
                 <TableCell className="text-right">

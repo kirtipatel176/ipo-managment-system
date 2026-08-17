@@ -21,19 +21,37 @@ const navItems = [
   { path: '/logs', label: 'System Logs', icon: <Activity size={20} /> },
   { path: '/health', label: 'System Health', icon: <Activity size={20} /> },
 ];
+interface SidebarProps {
+  isMobileOpen?: boolean;
+  setIsMobileOpen?: (val: boolean) => void;
+}
 
-export const Sidebar: React.FC = () => {
+export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, setIsMobileOpen }) => {
   const [collapsed, setCollapsed] = useState(false);
   const { user, signOut } = useAuth();
 
   return (
     <>
-      {/* Desktop Sidebar */}
+      {/* Mobile Backdrop */}
+      {isMobileOpen && (
+        <div 
+          className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm md:hidden"
+          onClick={() => setIsMobileOpen?.(false)}
+        />
+      )}
+
+      {/* Sidebar */}
       <motion.aside 
-        initial={{ width: 260 }}
-        animate={{ width: collapsed ? 80 : 260 }}
+        initial={false}
+        animate={{ 
+          width: collapsed ? 80 : 260
+        }}
         transition={{ type: 'spring', bounce: 0, duration: 0.3 }}
-        className="glass-panel z-20 hidden h-full flex-col md:flex border-r border-black/5"
+        className={cn(
+          "glass-panel z-50 h-full flex-col border-r border-black/5 flex",
+          "fixed top-0 left-0 transition-transform duration-300 md:relative md:translate-x-0",
+          isMobileOpen ? "translate-x-0" : "-translate-x-full"
+        )}
       >
         <div className="flex h-16 shrink-0 items-center justify-between px-4">
           <div className="flex items-center gap-3 overflow-hidden">
@@ -53,9 +71,15 @@ export const Sidebar: React.FC = () => {
           </div>
           <button 
             onClick={() => setCollapsed(!collapsed)}
-            className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-bg-tertiary text-text-tertiary hover:text-text-primary transition-colors"
+            className="hidden md:flex h-8 w-8 items-center justify-center rounded-full hover:bg-bg-tertiary text-text-tertiary hover:text-text-primary transition-colors"
           >
             {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+          </button>
+          <button 
+            onClick={() => setIsMobileOpen?.(false)}
+            className="flex md:hidden h-8 w-8 items-center justify-center rounded-full hover:bg-bg-tertiary text-text-tertiary hover:text-text-primary transition-colors"
+          >
+            <ChevronLeft size={16} />
           </button>
         </div>
         
@@ -64,6 +88,7 @@ export const Sidebar: React.FC = () => {
             <NavLink 
               key={item.path} 
               to={item.path} 
+              onClick={() => setIsMobileOpen?.(false)}
               className={({ isActive }) => cn(
                 "group flex h-10 items-center rounded-xl px-3 text-sm font-medium transition-colors",
                 isActive 
@@ -89,6 +114,7 @@ export const Sidebar: React.FC = () => {
         <div className="shrink-0 p-3 pb-6">
           <NavLink 
             to="/settings" 
+            onClick={() => setIsMobileOpen?.(false)}
             className={({ isActive }) => cn(
               "group flex h-10 items-center rounded-xl px-3 text-sm font-medium transition-colors",
               isActive 
@@ -102,7 +128,10 @@ export const Sidebar: React.FC = () => {
           </NavLink>
           {user ? (
             <button 
-              onClick={() => signOut()}
+              onClick={() => {
+                signOut();
+                setIsMobileOpen?.(false);
+              }}
               className={cn(
                 "w-full group mt-2 flex h-10 items-center rounded-xl px-3 text-sm font-medium transition-colors text-accent-red hover:bg-accent-red/10"
               )}
@@ -113,7 +142,8 @@ export const Sidebar: React.FC = () => {
             </button>
           ) : (
             <NavLink 
-              to="/login" 
+              to="/login"
+              onClick={() => setIsMobileOpen?.(false)} 
               className={({ isActive }) => cn(
                 "group mt-2 flex h-10 items-center rounded-xl px-3 text-sm font-medium transition-colors",
                 isActive 
@@ -128,23 +158,6 @@ export const Sidebar: React.FC = () => {
           )}
         </div>
       </motion.aside>
-
-      {/* Mobile Bottom Nav */}
-      <nav className="glass-panel fixed bottom-0 left-0 right-0 z-20 flex h-16 items-center justify-around border-t border-black/5 md:hidden px-2 pb-safe">
-        {navItems.slice(0, 5).map((item) => (
-          <NavLink 
-            key={item.path} 
-            to={item.path} 
-            className={({ isActive }) => cn(
-              "flex flex-col items-center justify-center w-16 h-full gap-1 transition-colors",
-              isActive ? "text-accent-blue" : "text-text-tertiary"
-            )}
-          >
-            {item.icon}
-            <span className="text-[10px] font-medium">{item.label}</span>
-          </NavLink>
-        ))}
-      </nav>
     </>
   );
 };

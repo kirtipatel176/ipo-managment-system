@@ -154,15 +154,15 @@ export const Profit: React.FC = () => {
       <div>
         <div className="flex flex-col gap-4 border-b border-black/5 pb-4 mb-6 md:flex-row md:items-center md:justify-between">
           <h2 className="text-lg font-semibold text-text-primary">Recent Sales Transactions</h2>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row flex-1 items-stretch sm:items-center gap-3 w-full sm:w-auto md:justify-end">
             <Input 
               icon={<Search size={16} />} 
               placeholder="Search sales..." 
-              className="max-w-[200px]"
+              className="w-full sm:max-w-[200px]"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
-            <Button variant="outline" size="sm" icon={<Filter size={14} />}>Filter</Button>
+            <Button variant="outline" size="sm" icon={<Filter size={14} />} className="w-full sm:w-auto">Filter</Button>
           </div>
         </div>
 

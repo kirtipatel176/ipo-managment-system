@@ -121,13 +121,17 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {showSeedConfirm && (
-        <div className="flex items-center gap-4 rounded-xl border border-accent-orange/30 bg-accent-orange/5 p-4 shadow-sm">
-          <AlertCircle size={18} className="text-accent-orange shrink-0" />
-          <p className="flex-1 text-sm text-text-primary">
-            This will <strong>wipe all data</strong> and reload the real seed data from the Excel sheet. Confirm?
-          </p>
-          <Button size="sm" variant="outline" onClick={handleReseed}>Yes, Reset</Button>
-          <Button size="sm" variant="ghost" onClick={() => setShowSeedConfirm(false)}>Cancel</Button>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 rounded-xl border border-accent-orange/30 bg-accent-orange/5 p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={18} className="text-accent-orange shrink-0" />
+            <p className="flex-1 text-sm text-text-primary">
+              This will <strong>wipe all data</strong> and reload the real seed data from the Excel sheet. Confirm?
+            </p>
+          </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <Button size="sm" variant="outline" onClick={handleReseed} className="flex-1 sm:flex-none">Yes, Reset</Button>
+            <Button size="sm" variant="ghost" onClick={() => setShowSeedConfirm(false)} className="flex-1 sm:flex-none">Cancel</Button>
+          </div>
         </div>
       )}
 

@@ -26,7 +26,7 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
@@ -43,11 +43,11 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             transition={{ type: "spring", bounce: 0.3, duration: 0.5 }}
             className={cn(
-              "relative z-50 w-full max-w-lg overflow-hidden rounded-2xl bg-bg-primary shadow-2xl ring-1 ring-black/5",
+              "relative z-50 flex flex-col w-full max-w-lg max-h-[90vh] overflow-hidden rounded-2xl bg-bg-primary shadow-2xl ring-1 ring-black/5",
               className
             )}
           >
-            <div className="flex items-center justify-between border-b border-black/5 px-6 py-4">
+            <div className="flex items-center justify-between border-b border-black/5 px-4 md:px-6 py-4 shrink-0">
               <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
               <button
                 onClick={onClose}
@@ -56,7 +56,7 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
                 <X size={20} />
               </button>
             </div>
-            <div className="p-6">
+            <div className="p-4 md:p-6 overflow-y-auto">
               {children}
             </div>
           </motion.div>

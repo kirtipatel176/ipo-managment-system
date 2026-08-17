@@ -160,15 +160,15 @@ export const Accounts: React.FC = () => {
           <h1 className="text-2xl font-semibold tracking-tight text-text-primary">Bank Accounts</h1>
           <p className="mt-1 text-text-secondary">Manage your linked personal bank accounts.</p>
         </div>
-        <div className="flex flex-1 items-center gap-3 justify-end">
+        <div className="flex flex-col sm:flex-row flex-1 items-stretch sm:items-center gap-3 md:justify-end">
           <Input
             icon={<Search size={16} />}
             placeholder="Search accounts..."
-            className="max-w-[200px]"
+            className="w-full sm:max-w-[200px]"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
-          <Button variant="primary" icon={<Plus size={16} />} onClick={openAddModal} disabled={!user}>
+          <Button variant="primary" icon={<Plus size={16} />} onClick={openAddModal} disabled={!user} className="w-full sm:w-auto">
             Add Account
           </Button>
         </div>

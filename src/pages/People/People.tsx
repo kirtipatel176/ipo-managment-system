@@ -193,15 +193,15 @@ export const People: React.FC = () => {
 
       <Card noPadding className="overflow-hidden">
         <div className="flex flex-col gap-4 border-b border-black/5 p-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-1 items-center gap-3">
+          <div className="flex flex-col sm:flex-row flex-1 items-stretch sm:items-center gap-3">
             <Input
               icon={<Search size={16} />}
               placeholder="Search Name, PAN, Demat ID..."
-              className="max-w-md"
+              className="w-full sm:max-w-md"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
-            <Button variant="outline" size="sm" icon={<Filter size={14} />}>Filters</Button>
+            <Button variant="outline" size="sm" icon={<Filter size={14} />} className="w-full sm:w-auto">Filters</Button>
           </div>
         </div>
 
@@ -209,10 +209,10 @@ export const People: React.FC = () => {
           <TableHeader>
             <TableRow>
               <TableHead>Person</TableHead>
-              <TableHead>PAN / Demat</TableHead>
-              <TableHead className="text-right">Total Sent</TableHead>
-              <TableHead className="text-right">Money Come Back</TableHead>
-              <TableHead className="text-right">IPO Blocked</TableHead>
+              <TableHead className="hidden md:table-cell">PAN / Demat</TableHead>
+              <TableHead className="text-right hidden lg:table-cell">Total Sent</TableHead>
+              <TableHead className="text-right hidden lg:table-cell">Money Come Back</TableHead>
+              <TableHead className="text-right hidden sm:table-cell">IPO Blocked</TableHead>
               <TableHead className="text-right">Pending</TableHead>
               <TableHead className="text-center">Status</TableHead>
               <TableHead></TableHead>
@@ -249,23 +249,23 @@ export const People: React.FC = () => {
                     </div>
                   </div>
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden md:table-cell">
                   <BlurOverlay blurLevel="blur-sm">
                     <div className="font-mono text-xs text-text-primary">{person.panNumber || '—'}</div>
                   </BlurOverlay>
                   <div className="text-xs text-text-tertiary mt-0.5">{(person as any).dematCount ?? 0} demat account{((person as any).dematCount ?? 0) !== 1 ? 's' : ''}</div>
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-right hidden lg:table-cell">
                   <span className="font-medium text-text-primary">
                     {person.totalSent > 0 ? formatCurrency(person.totalSent) : <span className="text-text-tertiary">—</span>}
                   </span>
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-right hidden lg:table-cell">
                   <span className="font-medium text-accent-green">
                     {person.moneyComeBack > 0 ? formatCurrency(person.moneyComeBack) : <span className="text-text-tertiary">—</span>}
                   </span>
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-right hidden sm:table-cell">
                   <span className={`font-medium ${person.ipoBlocked > 0 ? 'text-accent-orange' : 'text-text-tertiary'}`}>
                     {person.ipoBlocked > 0 ? formatCurrency(person.ipoBlocked) : '—'}
                   </span>

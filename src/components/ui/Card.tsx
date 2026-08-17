@@ -23,7 +23,7 @@ export const Card = React.forwardRef<HTMLDivElement, CardProps>(({
       transition={{ duration: 0.3 }}
       className={cn(
         "glass-panel rounded-2xl",
-        !noPadding && "p-6",
+        !noPadding && "p-4 md:p-6",
         className
       )}
       {...props}

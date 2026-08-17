@@ -266,15 +266,15 @@ export const IPOMaster: React.FC = () => {
 
       <Card noPadding className="overflow-hidden">
         <div className="flex flex-col gap-4 border-b border-black/5 p-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-1 items-center gap-3">
+          <div className="flex flex-col sm:flex-row flex-1 items-stretch sm:items-center gap-3">
             <Input
               icon={<Search size={16} />}
               placeholder="Search IPO name, company, symbol..."
-              className="max-w-md"
+              className="w-full sm:max-w-md"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
-            <Button variant="outline" size="sm" icon={<Filter size={14} />}>Filters</Button>
+            <Button variant="outline" size="sm" icon={<Filter size={14} />} className="w-full sm:w-auto">Filters</Button>
           </div>
         </div>
 
@@ -282,10 +282,10 @@ export const IPOMaster: React.FC = () => {
           <TableHeader>
             <TableRow>
               <TableHead>IPO Name</TableHead>
-              <TableHead>Price</TableHead>
-              <TableHead>Lot Size</TableHead>
+              <TableHead className="hidden lg:table-cell">Price</TableHead>
+              <TableHead className="hidden lg:table-cell">Lot Size</TableHead>
               <TableHead>Investment/Lot</TableHead>
-              <TableHead>Timeline</TableHead>
+              <TableHead className="hidden md:table-cell">Timeline</TableHead>
               <TableHead>Status</TableHead>
               <TableHead></TableHead>
             </TableRow>
@@ -310,10 +310,10 @@ export const IPOMaster: React.FC = () => {
                   <div className="font-semibold text-text-primary">{ipo.ipoName}</div>
                   <div className="text-xs text-text-secondary">{ipo.symbol || ipo.companyName}</div>
                 </TableCell>
-                <TableCell className="font-medium text-text-primary">{formatCurrency(ipo.pricePerShare)}</TableCell>
-                <TableCell className="text-text-primary">{ipo.lotSize} shares</TableCell>
+                <TableCell className="font-medium text-text-primary hidden lg:table-cell">{formatCurrency(ipo.pricePerShare)}</TableCell>
+                <TableCell className="text-text-primary hidden lg:table-cell">{ipo.lotSize} shares</TableCell>
                 <TableCell className="font-semibold text-text-primary">{formatCurrency(ipo.pricePerShare * ipo.lotSize)}</TableCell>
-                <TableCell>
+                <TableCell className="hidden md:table-cell">
                   <div className="flex flex-col gap-1 text-xs">
                     <div className="flex items-center gap-1 text-text-primary">
                       <span className="w-12 text-text-tertiary">Open:</span>

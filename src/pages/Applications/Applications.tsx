@@ -627,22 +627,22 @@ export const Applications: React.FC = () => {
 
       <Card noPadding className="overflow-hidden border border-black/5 shadow-sm">
         <div className="flex flex-col gap-4 border-b border-black/5 p-4 md:flex-row md:items-center md:justify-between bg-bg-secondary/20">
-          <div className="flex flex-1 items-center gap-3">
+          <div className="flex flex-col sm:flex-row flex-1 items-stretch sm:items-center gap-3">
             <Input
               icon={<Search size={16} />}
               placeholder="Search by IPO, person, broker, bank..."
-              className="max-w-sm"
+              className="w-full sm:max-w-sm"
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
             />
-            <div className="relative">
+            <div className="relative w-full sm:w-auto">
               <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-text-tertiary">
                 <Filter size={13} />
               </div>
               <select
                 value={selectedIpoId ?? ''}
                 onChange={e => setSelectedIpoId(e.target.value === '' ? null : Number(e.target.value))}
-                className="pl-8 pr-7 py-2 rounded-xl bg-white border border-black/10 text-sm font-medium text-text-primary shadow-sm hover:border-accent-blue/40 focus:outline-none focus:ring-2 focus:ring-accent-blue/30 transition-all appearance-none cursor-pointer"
+                className="w-full sm:w-auto pl-8 pr-7 py-2 rounded-xl bg-white border border-black/10 text-sm font-medium text-text-primary shadow-sm hover:border-accent-blue/40 focus:outline-none focus:ring-2 focus:ring-accent-blue/30 transition-all appearance-none cursor-pointer"
               >
                 <option value="">All IPOs</option>
                 {allIposForFilter?.map(ipo => (
@@ -665,13 +665,13 @@ export const Applications: React.FC = () => {
             <thead>
               <tr className="bg-bg-secondary/40 border-b border-black/5 text-text-tertiary">
                 <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider sticky left-0 bg-bg-secondary/95 backdrop-blur z-10 shadow-[1px_0_0_0_rgba(0,0,0,0.05)]">IPO & Applicant</th>
-                <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider">Type</th>
-                <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider">Demat</th>
-                <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider">Funding Bank</th>
+                <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Type</th>
+                <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden lg:table-cell">Demat</th>
+                <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden lg:table-cell">Funding Bank</th>
                 <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right">Lots</th>
                 <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right">Blocked</th>
-                <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right">Invested</th>
-                <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right">Refund</th>
+                <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right hidden md:table-cell">Invested</th>
+                <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right hidden md:table-cell">Refund</th>
                 <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider text-center">Allotment</th>
                 <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider text-center">Money</th>
                 <th className="px-4 py-3 font-medium text-xs uppercase tracking-wider text-center">Actions</th>
@@ -696,7 +696,7 @@ export const Applications: React.FC = () => {
                     <div className="font-semibold text-text-primary">{app.ipo?.ipoName}</div>
                     <div className="text-xs text-text-secondary mt-0.5">{app.applicantPerson?.fullName}</div>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 hidden md:table-cell">
                     {app.applicationType === 'OWN_DEMAT' ? (
                       <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-accent-blue/10 text-accent-blue">
                         <Landmark size={10} /> Own
@@ -707,11 +707,11 @@ export const Applications: React.FC = () => {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 hidden lg:table-cell">
                     <div className="text-xs font-medium text-text-primary">{app.demat?.brokerName ?? '—'}</div>
                     <div className="text-xs text-text-tertiary mt-0.5 truncate max-w-[100px]">{app.demat?.dematId ?? '—'}</div>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 hidden lg:table-cell">
                     <div className="text-xs font-medium text-text-primary">{app.fundingBank?.bankName ?? '—'}</div>
                     <div className="text-xs text-text-tertiary mt-0.5">{app.fundingBank?.accountName ?? '—'}</div>
                   </td>
@@ -726,14 +726,14 @@ export const Applications: React.FC = () => {
                       <span className="text-sm font-medium text-text-primary">{fmt(app.blockedAmount)}</span>
                     </BlurOverlay>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right hidden md:table-cell">
                     <BlurOverlay blurLevel="blur-sm">
                       <span className={`text-sm font-medium ${app.investmentAmount > 0 ? 'text-accent-green' : 'text-text-tertiary'}`}>
                         {app.investmentAmount > 0 ? fmt(app.investmentAmount) : '—'}
                       </span>
                     </BlurOverlay>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right hidden md:table-cell">
                     <BlurOverlay blurLevel="blur-sm">
                       <span className={`text-sm font-medium ${app.refundAmount > 0 ? 'text-accent-orange' : 'text-text-tertiary'}`}>
                         {app.refundAmount > 0 ? fmt(app.refundAmount) : '—'}
@@ -751,7 +751,7 @@ export const Applications: React.FC = () => {
                         </Button>
                       )}
                       <button
-                        onClick={() => { if(user) openEditModal(app); }}
+                        onClick={() => { if (user) openEditModal(app); }}
                         className={`flex h-8 w-8 items-center justify-center rounded-full transition-all ${user ? 'text-text-tertiary hover:bg-accent-blue/10 hover:text-accent-blue' : 'text-text-tertiary/30 cursor-not-allowed'}`}
                         title={user ? "Edit Notes" : "Login to Edit"}
                         disabled={!user}
@@ -759,7 +759,7 @@ export const Applications: React.FC = () => {
                         <Edit2 size={16} />
                       </button>
                       <button
-                        onClick={() => { if(user) handleDeleteApp(); }}
+                        onClick={() => { if (user) handleDeleteApp(); }}
                         className={`flex h-8 w-8 items-center justify-center rounded-full transition-all ${user ? 'text-text-tertiary hover:bg-accent-red/10 hover:text-accent-red' : 'text-text-tertiary/30 cursor-not-allowed'}`}
                         title={user ? "Delete Application" : "Login to Delete"}
                         disabled={!user}
@@ -774,13 +774,16 @@ export const Applications: React.FC = () => {
             {filteredApplications.length > 0 && (
               <tfoot>
                 <tr className="bg-bg-secondary/60 border-t-2 border-black/10 font-semibold text-sm">
-                  <td className="px-4 py-3 sticky left-0 bg-bg-secondary/95 backdrop-blur z-10 shadow-[1px_0_0_0_rgba(0,0,0,0.05)] text-text-secondary" colSpan={4}>
-                    Total ({filteredApplications.length} applications)
+                  <td className="px-4 py-3 sticky left-0 bg-bg-secondary/95 backdrop-blur z-10 shadow-[1px_0_0_0_rgba(0,0,0,0.05)] text-text-secondary">
+                    Total ({filteredApplications.length} apps)
                   </td>
+                  <td className="px-4 py-3 hidden md:table-cell" />
+                  <td className="px-4 py-3 hidden lg:table-cell" />
+                  <td className="px-4 py-3 hidden lg:table-cell" />
                   <td className="px-4 py-3 text-right font-bold text-text-primary">{summaryTotals.lots} lots</td>
                   <td className="px-4 py-3 text-right font-bold text-text-primary">{fmt(summaryTotals.blocked)}</td>
-                  <td className="px-4 py-3 text-right font-bold text-accent-green">{summaryTotals.invested > 0 ? fmt(summaryTotals.invested) : '—'}</td>
-                  <td className="px-4 py-3 text-right font-bold text-accent-orange">{summaryTotals.refund > 0 ? fmt(summaryTotals.refund) : '—'}</td>
+                  <td className="px-4 py-3 text-right font-bold text-accent-green hidden md:table-cell">{summaryTotals.invested > 0 ? fmt(summaryTotals.invested) : '—'}</td>
+                  <td className="px-4 py-3 text-right font-bold text-accent-orange hidden md:table-cell">{summaryTotals.refund > 0 ? fmt(summaryTotals.refund) : '—'}</td>
                   <td colSpan={3} className="px-4 py-3" />
                 </tr>
               </tfoot>

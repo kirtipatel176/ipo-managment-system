@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings as SettingsIcon, Lock, CheckCircle, XCircle } from 'lucide-react';
+import { Settings as SettingsIcon, Lock } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../hooks/useToast';
 import { Button } from '../../components/ui/Button';
