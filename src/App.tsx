@@ -17,7 +17,6 @@ import { Transactions } from './pages/Transactions/Transactions';
 import { Holdings } from './pages/Holdings/Holdings';
 import { Profit } from './pages/Profit/Profit';
 import { DematAccounts } from './pages/DematAccounts/DematAccounts';
-import { AnalyticsDashboard } from './pages/Analytics/AnalyticsDashboard';
 import { IPOFilterProvider } from './hooks/useIPOFilter';
 import { ToastProvider } from './hooks/useToast';
 import { ToastContainer } from './components/ui/Toast';
@@ -53,7 +52,6 @@ function App() {
               <Route path="people" element={<People />} />
               <Route path="holdings" element={<Holdings />} />
               <Route path="profit" element={<Profit />} />
-              <Route path="analytics" element={<AnalyticsDashboard />} />
               <Route path="health" element={<Health />} />
               <Route path="logs" element={<Logs />} />
               <Route path="settings" element={<Settings />} />

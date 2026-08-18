@@ -90,9 +90,9 @@ export const Profit: React.FC = () => {
     });
   };
 
-  const totalRealizedProfit = salesData?.reduce((acc, curr) => acc + (curr.ourProfitShare ?? curr.realizedPnL), 0) || 0;
+  const totalGrossRevenue = salesData?.reduce((acc, curr) => acc + (curr.grossSaleValue || curr.sharesSold * curr.sellPrice), 0) || 0;
+  const netProfit = salesData?.reduce((acc, curr) => acc + (curr.ourProfitShare ?? curr.realizedPnL), 0) || 0;
   const totalCharges = salesData?.reduce((acc, curr) => acc + curr.charges, 0) || 0;
-  const netProfit = totalRealizedProfit - totalCharges;
 
   if (isLoading) {
     return (
@@ -117,11 +117,11 @@ export const Profit: React.FC = () => {
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <Card className="flex flex-col justify-center border-black/5 shadow-sm">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
-            Your Gross Realized P&L
+            Total Sale Revenue
           </div>
           <BlurOverlay blurLevel="blur-md">
-            <div className={`text-3xl font-bold tracking-tight ${totalRealizedProfit >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
-              {totalRealizedProfit >= 0 ? '+' : ''}{formatCurrency(totalRealizedProfit)}
+            <div className="text-3xl font-bold tracking-tight text-text-primary">
+              {formatCurrency(totalGrossRevenue)}
             </div>
           </BlurOverlay>
         </Card>

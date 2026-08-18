@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
 import { mapHolding, mapIpo, mapPerson, mapBankAccount } from '../../lib/mappers';
@@ -8,7 +8,7 @@ import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { TransactionEngine } from '../../engine/TransactionEngine';
-import { PieChart, Briefcase, TrendingUp, ArrowUpRight, ArrowDownRight, Search } from 'lucide-react';
+import { PieChart, Briefcase, TrendingUp, ArrowUpRight, ArrowDownRight, Search, RefreshCw, Edit3 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Pagination } from '../../components/ui/Pagination';
 import { useToast } from '../../hooks/useToast';
@@ -20,11 +20,14 @@ export const Holdings: React.FC = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const sellSubmitting = useRef(false);
+  const refreshing = useRef(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 12;
 
   const [sellingHolding, setSellingHolding] = useState<any>(null);
+  const [editingPriceHolding, setEditingPriceHolding] = useState<any>(null);
+  const [newPrice, setNewPrice] = useState<number>(0);
   const [sellForm, setSellForm] = useState<{
     sharesToSell: number;
     sellPrice: number;
@@ -89,6 +92,63 @@ export const Holdings: React.FC = () => {
     }
   });
 
+  // Auto-refresh holdings prices on first load
+  useEffect(() => {
+    const autoRefresh = async () => {
+      try {
+        await TransactionEngine.refreshAllHoldingPrices();
+        queryClient.invalidateQueries({ queryKey: ['holdingsData'] });
+      } catch {
+        // Silent fail on auto-refresh — user can manually trigger
+      }
+    };
+    autoRefresh();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleRefreshPrices = async () => {
+    if (refreshing.current) return;
+    refreshing.current = true;
+    try {
+      const updatedCount = await TransactionEngine.refreshAllHoldingPrices();
+      queryClient.invalidateQueries({ queryKey: ['holdingsData'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardMetrics'] });
+      toast.success(
+        updatedCount > 0
+          ? `${updatedCount} holding(s) updated with latest market prices.`
+          : 'All holdings are already up to date.',
+        'Prices Refreshed'
+      );
+    } catch (error: any) {
+      toast.error(error.message ?? 'Failed to refresh prices.', 'Refresh Error');
+    } finally {
+      refreshing.current = false;
+    }
+  };
+
+  const handleUpdatePrice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPriceHolding || newPrice <= 0) return;
+    try {
+      // Update the IPO's current_market_price so all holdings for that IPO refresh
+      await supabase.from('ipos').update({
+        current_market_price: newPrice,
+        updated_at: new Date().toISOString(),
+      }).eq('id', editingPriceHolding.ipoId);
+
+      // Also directly update this holding
+      await TransactionEngine.updateHoldingPrice(editingPriceHolding.id, newPrice);
+      queryClient.invalidateQueries({ queryKey: ['holdingsData'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardMetrics'] });
+      toast.success(
+        `Market price for ${editingPriceHolding.ipoName} updated to ₹${newPrice.toLocaleString('en-IN')}.`,
+        'Price Updated'
+      );
+      setEditingPriceHolding(null);
+    } catch (error: any) {
+      toast.error(error.message ?? 'Failed to update price.', 'Update Error');
+    }
+  };
+
   const handleOpenSell = (holding: any) => {
     setSellingHolding(holding);
     setSellForm({
@@ -130,6 +190,8 @@ export const Holdings: React.FC = () => {
       );
       queryClient.invalidateQueries({ queryKey: ['holdingsData'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['salesData'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardMetrics'] });
       toast.success(
         `${sellForm.sharesToSell} shares of ${sellingHolding.ipoName} sold successfully.`,
         'Holding Sold'
@@ -184,6 +246,15 @@ export const Holdings: React.FC = () => {
           <h1 className="text-2xl font-semibold tracking-tight text-text-primary">Portfolio Holdings</h1>
           <p className="mt-1 text-text-secondary">Track your active IPO investments and unrealized gains.</p>
         </div>
+        <Button 
+          variant="outline" 
+          size="sm" 
+          icon={<RefreshCw size={14} />}
+          onClick={handleRefreshPrices}
+          disabled={!user}
+        >
+          Refresh Prices
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
@@ -310,7 +381,7 @@ export const Holdings: React.FC = () => {
                           <p className="text-lg font-bold text-text-primary tracking-tight">{formatCurrency(holding.currentValue)}</p>
                         </BlurOverlay>
                       </div>
-                      <div className="flex items-center gap-3 text-right">
+                      <div className="flex items-center gap-2 text-right">
                         <div>
                           <p className="text-xs font-medium text-text-tertiary mb-1">P&L</p>
                           <BlurOverlay blurLevel="blur-sm">
@@ -319,7 +390,17 @@ export const Holdings: React.FC = () => {
                             </p>
                           </BlurOverlay>
                         </div>
-                        <Button size="sm" variant="primary" onClick={() => handleOpenSell(holding)} disabled={!user}>Sell</Button>
+                        <div className="flex flex-col gap-1">
+                          <button
+                            onClick={() => { setEditingPriceHolding(holding); setNewPrice(holding.currentPrice); }}
+                            className="p-1.5 rounded-lg text-text-tertiary hover:text-accent-blue hover:bg-accent-blue/10 transition-colors"
+                            title="Update market price"
+                            disabled={!user}
+                          >
+                            <Edit3 size={14} />
+                          </button>
+                          <Button size="sm" variant="primary" onClick={() => handleOpenSell(holding)} disabled={!user}>Sell</Button>
+                        </div>
                       </div>
                     </div>
                   </Card>
@@ -336,6 +417,62 @@ export const Holdings: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Update Price Modal */}
+      <Modal isOpen={!!editingPriceHolding} onClose={() => setEditingPriceHolding(null)} title={`Update Price — ${editingPriceHolding?.ipoName}`}>
+        {editingPriceHolding && (
+          <form onSubmit={handleUpdatePrice} className="space-y-4">
+            <div className="rounded-xl bg-bg-secondary/50 p-4 space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-text-secondary">Current Price</span>
+                <span className="font-medium">{formatCurrency(editingPriceHolding.currentPrice)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-text-secondary">Avg. Cost</span>
+                <span className="font-medium">{formatCurrency(editingPriceHolding.averageCost)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-text-secondary">Shares</span>
+                <span className="font-medium">{editingPriceHolding.shares}</span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-text-primary">New Market Price (₹)</label>
+              <Input 
+                type="number" 
+                step="0.01" 
+                required 
+                min="0.01"
+                value={newPrice}
+                onChange={e => setNewPrice(Number(e.target.value))}
+              />
+            </div>
+
+            {newPrice > 0 && (
+              <div className="rounded-lg bg-bg-secondary p-3 space-y-1">
+                <div className="flex justify-between text-sm">
+                  <span className="text-text-secondary">New Value</span>
+                  <span className="font-semibold">{formatCurrency(editingPriceHolding.shares * newPrice)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-text-secondary">New P&L</span>
+                  <span className={`font-semibold ${(newPrice - editingPriceHolding.averageCost) >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
+                    {(newPrice - editingPriceHolding.averageCost) >= 0 ? '+' : ''}
+                    {formatCurrency(editingPriceHolding.shares * (newPrice - editingPriceHolding.averageCost))}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-4 border-t border-black/5">
+              <Button type="button" variant="ghost" onClick={() => setEditingPriceHolding(null)}>Cancel</Button>
+              <Button type="submit" variant="primary">Update Price</Button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
       {/* Sell Modal */}
       <Modal isOpen={!!sellingHolding} onClose={() => setSellingHolding(null)} title={`Sell ${sellingHolding?.ipoName}`}>
         {sellingHolding && (

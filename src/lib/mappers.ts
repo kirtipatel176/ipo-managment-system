@@ -170,9 +170,11 @@ export function mapSale(row: SaleRow) {
     personId: row.person_id,
     sharesSold: row.shares_sold,
     sellPrice: row.sell_price,
+    costBasis: row.cost_basis ?? (row.shares_sold * row.sell_price - row.realized_pnl - row.charges),
     charges: row.charges,
+    grossSaleValue: row.gross_sale_value ?? (row.shares_sold * row.sell_price),
     realizedPnL: row.realized_pnl,
-    ourProfitShare: row.our_profit_share ?? row.realized_pnl, // Fallback if not yet migrated
+    ourProfitShare: row.our_profit_share ?? row.realized_pnl,
     friendProfitShare: row.friend_profit_share ?? 0,
     date: row.date,
     returnedToBankAccountId: row.returned_to_bank_account_id,

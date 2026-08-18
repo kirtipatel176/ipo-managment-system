@@ -860,7 +860,9 @@ export class TransactionEngine {
       person_id: holding.person_id,
       shares_sold: sharesToSell,
       sell_price: sellPrice,
+      cost_basis: costOfSold,
       charges,
+      gross_sale_value: grossSale,
       realized_pnl: realizedPnL,
       our_profit_share: ourProfit,
       friend_profit_share: friendProfit,
@@ -873,6 +875,21 @@ export class TransactionEngine {
 
     if (sharesToSell === holding.shares) {
       await supabase.from('holdings').delete().eq('id', holdingId);
+
+      // Mark application listing_status as COMPLETED when all shares sold
+      if (holding.application_id) {
+        // Check if any other holdings remain for this application
+        const { data: remainingHoldings } = await supabase
+          .from('holdings')
+          .select('id')
+          .eq('application_id', holding.application_id);
+        if (!remainingHoldings || remainingHoldings.length === 0) {
+          await supabase.from('applications').update({
+            listing_status: 'COMPLETED',
+            updated_at: now,
+          }).eq('id', holding.application_id);
+        }
+      }
     } else {
       const newShares = holding.shares - sharesToSell;
       await supabase.from('holdings').update({
@@ -929,12 +946,12 @@ export class TransactionEngine {
       }
     }
 
-    const { data: investedAllocs } = await supabase
+    const { data: investedAllocs } = holding.application_id ? await supabase
       .from('allocations')
       .select('*')
       .eq('status', 'ACTIVE')
       .eq('purpose', 'INVESTED')
-      .eq('application_id', holding.application_id);
+      .eq('application_id', holding.application_id) : { data: [] };
 
     let costRemaining = costOfSold;
     for (const alloc of investedAllocs || []) {
@@ -961,6 +978,60 @@ export class TransactionEngine {
         costRemaining = 0;
       }
     }
+  }
+
+  /**
+   * Refresh all holding prices from their IPO's current_market_price.
+   * This ensures Holdings page shows up-to-date unrealized P&L.
+   */
+  static async refreshAllHoldingPrices(): Promise<number> {
+    const { data: holdings } = await supabase.from('holdings').select('*');
+    if (!holdings || holdings.length === 0) return 0;
+
+    // Get unique IPO IDs from holdings
+    const ipoIds = [...new Set(holdings.map(h => h.ipo_id))];
+    const { data: ipos } = await supabase
+      .from('ipos')
+      .select('id, current_market_price')
+      .in('id', ipoIds);
+
+    if (!ipos) return 0;
+
+    const ipoPriceMap = new Map<number, number>();
+    for (const ipo of ipos) {
+      if (ipo.current_market_price != null) {
+        ipoPriceMap.set(ipo.id, ipo.current_market_price);
+      }
+    }
+
+    let updatedCount = 0;
+    const now = new Date().toISOString();
+
+    for (const holding of holdings) {
+      const marketPrice = ipoPriceMap.get(holding.ipo_id);
+      if (marketPrice == null) continue;
+
+      // Skip if price hasn't changed (avoid unnecessary writes)
+      if (Math.abs(holding.current_price - marketPrice) < 0.01) continue;
+
+      const currentValue = holding.shares * marketPrice;
+      const unrealizedProfit = currentValue - (holding.shares * holding.average_cost);
+      const unrealizedROI = holding.average_cost > 0
+        ? ((marketPrice - holding.average_cost) / holding.average_cost) * 100
+        : 0;
+
+      await supabase.from('holdings').update({
+        current_price: marketPrice,
+        current_value: currentValue,
+        unrealized_profit: unrealizedProfit,
+        unrealized_roi: unrealizedROI,
+        updated_at: now,
+      }).eq('id', holding.id);
+
+      updatedCount++;
+    }
+
+    return updatedCount;
   }
 
   static async updateHoldingPrice(holdingId: number, newPrice: number): Promise<void> {

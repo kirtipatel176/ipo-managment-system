@@ -34,7 +34,7 @@ export const Health: React.FC = () => {
       // 1. Overall DB ping
       const dbStart = performance.now();
       try {
-        const { error } = await supabase.from('BankAccounts').select('*', { head: true, count: 'exact' });
+        const { error } = await supabase.from('bank_accounts').select('*', { head: true, count: 'exact' });
         if (error) throw error;
         const dbEnd = performance.now();
         setDbLatency(Math.round(dbEnd - dbStart));
@@ -48,7 +48,7 @@ export const Health: React.FC = () => {
         tablesToCheck.map(async (item) => {
           const apiStart = performance.now();
           try {
-            const { error } = await supabase.from(item.table).select('*', { head: true, count: 'exact' });
+            const { error } = await supabase.from(item.table as any).select('*', { head: true, count: 'exact' });
             const apiEnd = performance.now();
             setApiStatuses((prev) => ({
               ...prev,

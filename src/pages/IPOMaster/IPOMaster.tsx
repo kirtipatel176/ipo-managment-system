@@ -22,6 +22,7 @@ export const IPOMaster: React.FC = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingIpo, setEditingIpo] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
 
@@ -153,15 +154,22 @@ export const IPOMaster: React.FC = () => {
     const updates: { id: number; status: string }[] = [];
 
     ipos.forEach(ipo => {
-      if (!ipo.id || ipo.status === 'COMPLETED') return;
+      if (!ipo.id) return;
 
       const open = parseDate(ipo.openDate);
       const close = parseDate(ipo.closeDate);
       const allot = parseDate(ipo.allotmentDate);
+      const list = parseDate(ipo.listingDate);
 
       let expectedStatus = ipo.status;
 
-      if (open > 0 && today < open) {
+      if (list > 0 && today >= list + 2 * 24 * 60 * 60 * 1000) {
+        expectedStatus = 'COMPLETED';
+      } else if (list > 0 && today >= list) {
+        if (['UPCOMING', 'OPEN', 'CLOSED', 'ALLOTMENT_PENDING', 'ALLOTTED', 'NOT_ALLOTTED', 'REFUND_PENDING'].includes(ipo.status)) {
+          expectedStatus = 'LISTED';
+        }
+      } else if (open > 0 && today < open) {
         expectedStatus = 'UPCOMING';
       } else if (open > 0 && close > 0 && today >= open && today <= close) {
         expectedStatus = 'OPEN';
@@ -184,13 +192,16 @@ export const IPOMaster: React.FC = () => {
   }, [ipos]); // React Query data reference changes on new fetch
 
   const filteredIpos = ipos?.filter(ipo => {
-    if (!searchTerm) return true;
-    const searchLower = searchTerm.toLowerCase();
-    return (
-      ipo.ipoName.toLowerCase().includes(searchLower) ||
-      ipo.companyName?.toLowerCase().includes(searchLower) ||
-      ipo.symbol?.toLowerCase().includes(searchLower)
-    );
+      const matchSearch = !searchTerm || 
+        ipo.ipoName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        ipo.companyName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        ipo.symbol?.toLowerCase().includes(searchTerm.toLowerCase());
+        
+      const matchStatus = statusFilter === 'ALL' || 
+        (statusFilter === 'ACTIVE' && ['OPEN', 'UPCOMING', 'ALLOTMENT_PENDING', 'ALLOTTED', 'REFUND_PENDING'].includes(ipo.status)) ||
+        ipo.status === statusFilter;
+        
+      return matchSearch && matchStatus;
   }) || [];
 
   const paginatedIpos = filteredIpos.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -236,13 +247,25 @@ export const IPOMaster: React.FC = () => {
   const getStatusVariant = (status: string) => {
     switch (status) {
       case 'OPEN': return 'success';
+      case 'COMPLETED': return 'success';
       case 'UPCOMING': return 'info';
+      case 'LISTED': return 'info';
       case 'CLOSED': return 'warning';
-      case 'ALLOTMENT_DONE': return 'default';
-      case 'LISTED': return 'default';
+      case 'ALLOTMENT_PENDING': return 'warning';
+      case 'NOT_ALLOTTED': return 'danger';
+      case 'REFUND_PENDING': return 'warning';
       default: return 'default';
     }
   };
+
+  const getTimelineStatus = (date: string | null, label: string, isPast: boolean, isCurrent: boolean) => (
+    <div className={`flex flex-col ${isPast ? 'text-accent-blue' : isCurrent ? 'text-text-primary' : 'text-text-tertiary opacity-60'}`}>
+      <span className="text-[10px] font-medium uppercase tracking-wider">{label}</span>
+      <span className="text-xs font-semibold">
+        {date ? new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'TBA'}
+      </span>
+    </div>
+  );
 
   if (isLoading) {
     return (
@@ -264,7 +287,7 @@ export const IPOMaster: React.FC = () => {
         </div>
       </div>
 
-      <Card noPadding className="overflow-hidden">
+      <Card noPadding className="overflow-hidden glass-panel">
         <div className="flex flex-col gap-4 border-b border-black/5 p-4 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-col sm:flex-row flex-1 items-stretch sm:items-center gap-3">
             <Input
@@ -274,18 +297,32 @@ export const IPOMaster: React.FC = () => {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
-            <Button variant="outline" size="sm" icon={<Filter size={14} />} className="w-full sm:w-auto">Filters</Button>
+            <div className="flex items-center gap-2 overflow-x-auto pb-2 sm:pb-0 hide-scrollbar">
+              {['ALL', 'ACTIVE', 'OPEN', 'UPCOMING', 'CLOSED', 'COMPLETED'].map(filter => (
+                <button
+                  key={filter}
+                  onClick={() => setStatusFilter(filter)}
+                  className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                    statusFilter === filter
+                      ? 'bg-text-primary text-white shadow-sm'
+                      : 'bg-black/5 text-text-secondary hover:bg-black/10'
+                  }`}
+                >
+                  {filter}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>IPO Name</TableHead>
-              <TableHead className="hidden lg:table-cell">Price</TableHead>
+              <TableHead>IPO Details</TableHead>
+              <TableHead className="hidden lg:table-cell">Price Band</TableHead>
               <TableHead className="hidden lg:table-cell">Lot Size</TableHead>
-              <TableHead>Investment/Lot</TableHead>
-              <TableHead className="hidden md:table-cell">Timeline</TableHead>
+              <TableHead>Investment</TableHead>
+              <TableHead className="hidden md:table-cell min-w-[200px]">Timeline</TableHead>
               <TableHead>Status</TableHead>
               <TableHead></TableHead>
             </TableRow>
@@ -293,8 +330,11 @@ export const IPOMaster: React.FC = () => {
           <TableBody>
             {paginatedIpos.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="h-32 text-center text-text-secondary">
-                  No IPOs found.
+                <TableCell colSpan={7} className="h-48 text-center text-text-secondary">
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <Filter size={32} className="opacity-20" />
+                    <p>No IPOs found matching your criteria.</p>
+                  </div>
                 </TableCell>
               </TableRow>
             )}
@@ -307,29 +347,52 @@ export const IPOMaster: React.FC = () => {
                 className="group border-b border-black/5 transition-colors hover:bg-bg-secondary/50 cursor-pointer"
               >
                 <TableCell>
-                  <div className="font-semibold text-text-primary">{ipo.ipoName}</div>
-                  <div className="text-xs text-text-secondary">{ipo.symbol || ipo.companyName}</div>
-                </TableCell>
-                <TableCell className="font-medium text-text-primary hidden lg:table-cell">{formatCurrency(ipo.pricePerShare)}</TableCell>
-                <TableCell className="text-text-primary hidden lg:table-cell">{ipo.lotSize} shares</TableCell>
-                <TableCell className="font-semibold text-text-primary">{formatCurrency(ipo.pricePerShare * ipo.lotSize)}</TableCell>
-                <TableCell className="hidden md:table-cell">
-                  <div className="flex flex-col gap-1 text-xs">
-                    <div className="flex items-center gap-1 text-text-primary">
-                      <span className="w-12 text-text-tertiary">Open:</span>
-                      {ipo.openDate ? new Date(ipo.openDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'TBA'}
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-blue/10 text-accent-blue font-bold shadow-sm">
+                      {ipo.ipoName.substring(0, 1).toUpperCase()}
                     </div>
-                    <div className="flex items-center gap-1 text-text-secondary">
-                      <span className="w-12 text-text-tertiary">Allot:</span>
-                      {ipo.allotmentDate ? new Date(ipo.allotmentDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'TBA'}
+                    <div>
+                      <div className="font-semibold text-text-primary text-sm">{ipo.ipoName}</div>
+                      <div className="text-xs text-text-secondary mt-0.5">{ipo.symbol || ipo.companyName}</div>
                     </div>
                   </div>
                 </TableCell>
-                <TableCell>
-                  <Badge variant={getStatusVariant(ipo.status) as any}>{ipo.status.replace('_', ' ')}</Badge>
+                <TableCell className="font-medium text-text-primary hidden lg:table-cell">{formatCurrency(ipo.pricePerShare)}</TableCell>
+                <TableCell className="text-text-primary hidden lg:table-cell">
+                  <div className="flex items-center gap-1.5">
+                    <Badge variant="default" className="bg-black/5 text-text-secondary">{ipo.lotSize} shares</Badge>
+                  </div>
+                </TableCell>
+                <TableCell className="font-semibold text-text-primary">{formatCurrency(ipo.pricePerShare * ipo.lotSize)}</TableCell>
+                <TableCell className="hidden md:table-cell">
+                  <div className="flex items-center gap-3">
+                    {getTimelineStatus(
+                      ipo.openDate, 
+                      'Open', 
+                      new Date(ipo.openDate || '') < new Date() && ipo.status !== 'UPCOMING',
+                      ipo.status === 'OPEN'
+                    )}
+                    <div className="h-px w-4 bg-black/10 shrink-0"></div>
+                    {getTimelineStatus(
+                      ipo.allotmentDate, 
+                      'Allot', 
+                      new Date(ipo.allotmentDate || '') < new Date() && !['UPCOMING', 'OPEN', 'CLOSED'].includes(ipo.status),
+                      ipo.status === 'ALLOTMENT_PENDING'
+                    )}
+                    <div className="h-px w-4 bg-black/10 shrink-0"></div>
+                    {getTimelineStatus(
+                      ipo.listingDate, 
+                      'List', 
+                      new Date(ipo.listingDate || '') < new Date() && ['LISTED', 'COMPLETED'].includes(ipo.status),
+                      ipo.status === 'LISTED'
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell>
-                  <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Badge variant={getStatusVariant(ipo.status) as any} className="shadow-sm">{ipo.status.replace('_', ' ')}</Badge>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center justify-end gap-1 transition-opacity">
                     <button
                       onClick={(e) => { e.stopPropagation(); if (user) openEditModal(ipo); }}
                       className={`flex h-8 w-8 items-center justify-center rounded-full transition-all ${user ? 'text-text-tertiary hover:bg-accent-blue/10 hover:text-accent-blue' : 'text-text-tertiary/30 cursor-not-allowed'}`}
@@ -423,6 +486,11 @@ export const IPOMaster: React.FC = () => {
             </div>
 
             <div className="space-y-1.5">
+              <label className="text-sm font-medium text-text-primary">Listing Date</label>
+              <Input type="date" value={newIpo.listingDate} onChange={e => setNewIpo({ ...newIpo, listingDate: e.target.value })} />
+            </div>
+
+            <div className="space-y-1.5">
               <label className="text-sm font-medium text-text-primary">Refund Date</label>
               <Input type="date" value={newIpo.refundDate} onChange={e => setNewIpo({ ...newIpo, refundDate: e.target.value })} />
             </div>
@@ -498,6 +566,11 @@ export const IPOMaster: React.FC = () => {
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-text-primary">Allotment Date</label>
                 <Input type="date" value={editingIpo.allotmentDate || ''} onChange={e => setEditingIpo({ ...editingIpo, allotmentDate: e.target.value })} />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-text-primary">Listing Date</label>
+                <Input type="date" value={editingIpo.listingDate || ''} onChange={e => setEditingIpo({ ...editingIpo, listingDate: e.target.value })} />
               </div>
 
               <div className="space-y-1.5">
