@@ -90,7 +90,7 @@ export const Profit: React.FC = () => {
     });
   };
 
-  const totalRealizedProfit = salesData?.reduce((acc, curr) => acc + curr.realizedPnL, 0) || 0;
+  const totalRealizedProfit = salesData?.reduce((acc, curr) => acc + (curr.ourProfitShare ?? curr.realizedPnL), 0) || 0;
   const totalCharges = salesData?.reduce((acc, curr) => acc + curr.charges, 0) || 0;
   const netProfit = totalRealizedProfit - totalCharges;
 
@@ -117,7 +117,7 @@ export const Profit: React.FC = () => {
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <Card className="flex flex-col justify-center border-black/5 shadow-sm">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
-            Gross Realized P&L
+            Your Gross Realized P&L
           </div>
           <BlurOverlay blurLevel="blur-md">
             <div className={`text-3xl font-bold tracking-tight ${totalRealizedProfit >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
@@ -140,7 +140,7 @@ export const Profit: React.FC = () => {
         <Card className={`flex flex-col justify-center border-black/5 shadow-sm relative overflow-hidden ${netProfit >= 0 ? 'bg-accent-green/5' : 'bg-accent-red/5'}`}>
           <div className={`absolute -right-4 -top-4 w-24 h-24 rounded-full opacity-10 ${netProfit >= 0 ? 'bg-accent-green' : 'bg-accent-red'}`} />
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
-            Net Realized P&L
+            Your Net Realized P&L
           </div>
           <BlurOverlay blurLevel="blur-md">
             <div className={`flex items-end gap-3 text-3xl font-bold tracking-tight relative z-10 ${netProfit >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
@@ -180,7 +180,8 @@ export const Profit: React.FC = () => {
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {paginatedSales.map((sale, index) => {
-                const isProfit = sale.realizedPnL >= 0;
+                const isProfit = (sale.ourProfitShare ?? sale.realizedPnL) >= 0;
+                const hasSplit = sale.ourProfitShare !== undefined && sale.ourProfitShare !== sale.realizedPnL;
               return (
                 <motion.div
                   initial={{ opacity: 0, y: 10 }}
@@ -199,12 +200,19 @@ export const Profit: React.FC = () => {
                           {sale.personName}
                         </p>
                       </div>
-                      <Badge variant={isProfit ? 'success' : 'danger'} className="shrink-0 flex items-center gap-1 font-semibold text-sm">
-                        {isProfit ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-                        <BlurOverlay blurLevel="blur-sm">
-                          <span>{formatCurrency(Math.abs(sale.realizedPnL))}</span>
-                        </BlurOverlay>
-                      </Badge>
+                      <div className="flex flex-col items-end">
+                        <Badge variant={isProfit ? 'success' : 'danger'} className="shrink-0 flex items-center gap-1 font-semibold text-sm">
+                          {isProfit ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                          <BlurOverlay blurLevel="blur-sm">
+                            <span>{formatCurrency(Math.abs(sale.ourProfitShare ?? sale.realizedPnL))}</span>
+                          </BlurOverlay>
+                        </Badge>
+                        {hasSplit && (
+                          <span className="text-[10px] text-text-tertiary mt-1">
+                            Total: {formatCurrency(sale.realizedPnL)}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-y-4 gap-x-2 mb-4 flex-1 bg-bg-secondary/30 rounded-xl p-3">

@@ -25,13 +25,28 @@ export const Holdings: React.FC = () => {
   const pageSize = 12;
 
   const [sellingHolding, setSellingHolding] = useState<any>(null);
-  const [sellForm, setSellForm] = useState({
+  const [sellForm, setSellForm] = useState<{
+    sharesToSell: number;
+    sellPrice: number;
+    charges: number;
+    bankAccountId: number;
+    date: string;
+    utr: string;
+    profitMode: 'ALL_MINE' | 'ALL_FRIENDS' | 'SPLIT';
+    profitSplitRatio: number;
+    proceedsDestination: 'FRIEND_BALANCE' | 'BANK_ACCOUNT';
+    targetBankAccountId: number;
+  }>({
     sharesToSell: 0,
     sellPrice: 0,
     charges: 0,
     bankAccountId: 0,
     date: new Date().toISOString().split('T')[0],
-    utr: ''
+    utr: '',
+    profitMode: 'ALL_MINE',
+    profitSplitRatio: 50,
+    proceedsDestination: 'FRIEND_BALANCE',
+    targetBankAccountId: 0
   });
   
   const { data: bankAccounts } = useQuery({
@@ -82,13 +97,19 @@ export const Holdings: React.FC = () => {
       charges: 0,
       bankAccountId: bankAccounts?.[0]?.id || 0,
       date: new Date().toISOString().split('T')[0],
-      utr: ''
+      utr: '',
+      profitMode: 'ALL_MINE',
+      profitSplitRatio: 50,
+      proceedsDestination: 'FRIEND_BALANCE',
+      targetBankAccountId: bankAccounts?.[0]?.id || 0
     });
   };
 
   const handleSellSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sellingHolding || (sellingHolding.isSelf && !sellForm.bankAccountId)) return;
+    if (!sellingHolding) return;
+    if (sellingHolding.isSelf && !sellForm.bankAccountId) return;
+    if (!sellingHolding.isSelf && sellForm.proceedsDestination === 'BANK_ACCOUNT' && !sellForm.targetBankAccountId) return;
     if (sellSubmitting.current) return;
     sellSubmitting.current = true;
     try {
@@ -99,7 +120,13 @@ export const Holdings: React.FC = () => {
         Number(sellForm.charges),
         Number(sellForm.bankAccountId),
         sellForm.date,
-        sellForm.utr || undefined
+        sellForm.utr || undefined,
+        sellingHolding.isSelf ? undefined : {
+          mode: sellForm.profitMode,
+          splitRatio: Number(sellForm.profitSplitRatio),
+          proceedsDestination: sellForm.proceedsDestination,
+          targetBankAccountId: Number(sellForm.targetBankAccountId)
+        }
       );
       queryClient.invalidateQueries({ queryKey: ['holdingsData'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
@@ -164,39 +191,33 @@ export const Holdings: React.FC = () => {
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
             <Briefcase size={16} /> Total Invested
           </div>
-          <BlurOverlay blurLevel="blur-md">
-            <div className="text-3xl font-bold tracking-tight text-text-primary">
-              {formatCurrency(totalInvested)}
-            </div>
-          </BlurOverlay>
+          <div className="text-3xl font-bold tracking-tight text-text-primary">
+            {formatCurrency(totalInvested)}
+          </div>
         </Card>
 
         <Card className="flex flex-col justify-center bg-gradient-to-br from-bg-primary to-bg-secondary border-black/5 shadow-sm">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
             <PieChart size={16} /> Current Value
           </div>
-          <BlurOverlay blurLevel="blur-md">
-            <div className="text-3xl font-bold tracking-tight text-text-primary">
-              {formatCurrency(totalCurrentValue)}
-            </div>
-          </BlurOverlay>
+          <div className="text-3xl font-bold tracking-tight text-text-primary">
+            {formatCurrency(totalCurrentValue)}
+          </div>
         </Card>
 
         <Card className={`flex flex-col justify-center border-black/5 shadow-sm ${totalUnrealizedProfit >= 0 ? 'bg-accent-green/5' : 'bg-accent-red/5'}`}>
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
             <TrendingUp size={16} /> Unrealized P&L
           </div>
-          <BlurOverlay blurLevel="blur-md">
-            <div className="flex items-end gap-3">
-              <div className={`text-3xl font-bold tracking-tight ${totalUnrealizedProfit >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
-                {totalUnrealizedProfit >= 0 ? '+' : ''}{formatCurrency(totalUnrealizedProfit)}
-              </div>
-              <div className={`flex items-center gap-1 text-sm font-medium mb-1 ${totalUnrealizedProfit >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
-                {totalUnrealizedProfit >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
-                {formatPercentage(totalROI)}
-              </div>
+          <div className="flex items-end gap-3">
+            <div className={`text-3xl font-bold tracking-tight ${totalUnrealizedProfit >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
+              {totalUnrealizedProfit >= 0 ? '+' : ''}{formatCurrency(totalUnrealizedProfit)}
             </div>
-          </BlurOverlay>
+            <div className={`flex items-center gap-1 text-sm font-medium mb-1 ${totalUnrealizedProfit >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
+              {totalUnrealizedProfit >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+              {formatPercentage(totalROI)}
+            </div>
+          </div>
         </Card>
       </div>
 
@@ -373,8 +394,56 @@ export const Holdings: React.FC = () => {
                 </select>
               </div>
             ) : (
-              <div className="rounded-lg bg-accent-orange/10 p-3 text-sm text-accent-orange border border-accent-orange/20">
-                Sale proceeds will be kept in <strong>{sellingHolding.personName}</strong>'s balance. You can record a "Receive Money" transaction later when they transfer it back to you.
+              <div className="space-y-4 rounded-xl border border-black/5 bg-bg-secondary/50 p-4">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-text-primary">Profit Ownership</label>
+                  <select 
+                    value={sellForm.profitMode}
+                    onChange={e => setSellForm({...sellForm, profitMode: e.target.value as any})}
+                    className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-text-primary focus:border-accent-blue focus:outline-none focus:ring-2 focus:ring-accent-blue/20"
+                  >
+                    <option value="ALL_MINE">100% Mine (They owe me all profit)</option>
+                    <option value="ALL_FRIENDS">100% {sellingHolding.personName}'s</option>
+                    <option value="SPLIT">Split Profit</option>
+                  </select>
+                </div>
+                {sellForm.profitMode === 'SPLIT' && (
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-text-primary">My Profit Share (%)</label>
+                    <Input 
+                      type="number" min="0" max="100"
+                      value={sellForm.profitSplitRatio}
+                      onChange={e => setSellForm({...sellForm, profitSplitRatio: Number(e.target.value)})}
+                    />
+                  </div>
+                )}
+                <div className="space-y-1.5 pt-2 border-t border-black/5">
+                  <label className="text-sm font-medium text-text-primary">Proceeds Destination</label>
+                  <select 
+                    value={sellForm.proceedsDestination}
+                    onChange={e => setSellForm({...sellForm, proceedsDestination: e.target.value as any})}
+                    className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-text-primary focus:border-accent-blue focus:outline-none focus:ring-2 focus:ring-accent-blue/20"
+                  >
+                    <option value="FRIEND_BALANCE">Keep in {sellingHolding.personName}'s Balance</option>
+                    <option value="BANK_ACCOUNT">Transferred to my Bank immediately</option>
+                  </select>
+                </div>
+                {sellForm.proceedsDestination === 'BANK_ACCOUNT' && (
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-text-primary">Receive Money In</label>
+                    <select 
+                      required
+                      value={sellForm.targetBankAccountId}
+                      onChange={e => setSellForm({...sellForm, targetBankAccountId: Number(e.target.value)})}
+                      className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-text-primary focus:border-accent-blue focus:outline-none focus:ring-2 focus:ring-accent-blue/20"
+                    >
+                      <option value={0}>Select Bank Account</option>
+                      {bankAccounts?.map(b => (
+                        <option key={b.id} value={b.id}>{b.bankName} - {b.accountName}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
             )}
 
@@ -402,12 +471,40 @@ export const Holdings: React.FC = () => {
                 <span className="text-text-secondary">Cost of Sold Shares</span>
                 <span className="font-medium">-₹{(sellForm.sharesToSell * sellingHolding.averageCost).toLocaleString('en-IN', {maximumFractionDigits: 0})}</span>
               </div>
-              <div className="flex justify-between border-t border-black/10 pt-2 font-semibold">
-                <span>Realized P&L</span>
+              <div className="flex justify-between border-t border-black/10 pt-2 font-semibold mb-2">
+                <span>Total Realized P&L</span>
                 <span className={(sellForm.sharesToSell * sellForm.sellPrice - sellForm.charges - sellForm.sharesToSell * sellingHolding.averageCost) >= 0 ? 'text-accent-green' : 'text-accent-red'}>
                   ₹{(sellForm.sharesToSell * sellForm.sellPrice - sellForm.charges - sellForm.sharesToSell * sellingHolding.averageCost).toLocaleString('en-IN', {maximumFractionDigits: 0})}
                 </span>
               </div>
+              {!sellingHolding.isSelf && (
+                <div className="bg-bg-primary rounded border border-black/5 p-2 mt-2 space-y-1">
+                  <div className="flex justify-between text-xs font-medium">
+                    <span className="text-text-secondary">Our Profit Share</span>
+                    <span className="text-accent-green">
+                      ₹{(() => {
+                        const pnl = (sellForm.sharesToSell * sellForm.sellPrice - sellForm.charges - sellForm.sharesToSell * sellingHolding.averageCost);
+                        if (sellForm.profitMode === 'ALL_MINE') return pnl.toLocaleString('en-IN', {maximumFractionDigits: 0});
+                        if (sellForm.profitMode === 'ALL_FRIENDS') return '0';
+                        return (pnl * (sellForm.profitSplitRatio / 100)).toLocaleString('en-IN', {maximumFractionDigits: 0});
+                      })()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs font-medium">
+                    <span className="text-text-secondary">Amount Returned to Us</span>
+                    <span className="text-text-primary font-bold">
+                      ₹{(() => {
+                        const cost = sellForm.sharesToSell * sellingHolding.averageCost;
+                        const pnl = (sellForm.sharesToSell * sellForm.sellPrice - sellForm.charges - cost);
+                        let ourPnl = pnl;
+                        if (sellForm.profitMode === 'ALL_FRIENDS') ourPnl = 0;
+                        if (sellForm.profitMode === 'SPLIT') ourPnl = pnl * (sellForm.profitSplitRatio / 100);
+                        return (cost + ourPnl).toLocaleString('en-IN', {maximumFractionDigits: 0});
+                      })()}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-3 pt-4 border-t border-black/5">

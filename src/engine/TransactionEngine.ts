@@ -793,7 +793,8 @@ export class TransactionEngine {
     }
 
     if (amountToReturn > 0) {
-      throw new Error(`Insufficient unallocated funds with person. Shortfall: ₹${amountToReturn}`);
+      const available = amount - amountToReturn;
+      throw new Error(`Insufficient unallocated funds for this specific person profile. You tried to return ₹${amount}, but this profile only has ₹${available} unallocated. (Note: If you have duplicate people with the same name, you may have selected the wrong one.)`);
     }
 
     const { data: tx } = await supabase.from('transactions').insert({
@@ -816,7 +817,13 @@ export class TransactionEngine {
     charges: number,
     bankAccountId: number,
     date: string,
-    utr?: string
+    utr?: string,
+    profitOptions?: {
+      mode: 'ALL_MINE' | 'ALL_FRIENDS' | 'SPLIT';
+      splitRatio?: number;
+      proceedsDestination: 'FRIEND_BALANCE' | 'BANK_ACCOUNT';
+      targetBankAccountId?: number;
+    }
   ): Promise<void> {
     const { data: holding } = await supabase.from('holdings').select('*').eq('id', holdingId).single();
     if (!holding) throw new Error('Holding not found');
@@ -828,6 +835,25 @@ export class TransactionEngine {
     const realizedPnL = netSale - costOfSold;
     const now = new Date().toISOString();
 
+    let ourProfit = realizedPnL;
+    let friendProfit = 0;
+
+    const { data: person } = await supabase.from('people').select('*').eq('id', holding.person_id).single();
+    if (!person) throw new Error('Person not found');
+    
+    const isSelf = person.is_self;
+    if (isSelf && !bankAccountId) throw new Error('Bank account is required for own holdings.');
+
+    if (!isSelf && profitOptions) {
+      if (profitOptions.mode === 'ALL_FRIENDS') {
+        ourProfit = 0;
+        friendProfit = realizedPnL;
+      } else if (profitOptions.mode === 'SPLIT' && profitOptions.splitRatio !== undefined) {
+        ourProfit = realizedPnL * (profitOptions.splitRatio / 100);
+        friendProfit = realizedPnL - ourProfit;
+      }
+    }
+
     await supabase.from('sales').insert({
       holding_id: holdingId,
       ipo_id: holding.ipo_id,
@@ -836,8 +862,10 @@ export class TransactionEngine {
       sell_price: sellPrice,
       charges,
       realized_pnl: realizedPnL,
+      our_profit_share: ourProfit,
+      friend_profit_share: friendProfit,
       date,
-      returned_to_bank_account_id: bankAccountId,
+      returned_to_bank_account_id: isSelf ? bankAccountId : profitOptions?.targetBankAccountId,
       utr,
       created_at: now,
       updated_at: now,
@@ -855,12 +883,6 @@ export class TransactionEngine {
       }).eq('id', holdingId);
     }
 
-    const { data: person } = await supabase.from('people').select('*').eq('id', holding.person_id).single();
-    if (!person) throw new Error('Person not found');
-    
-    const isSelf = person.is_self;
-    if (isSelf && !bankAccountId) throw new Error('Bank account is required for own holdings.');
-
     let txId: number | undefined;
 
     if (isSelf) {
@@ -877,16 +899,34 @@ export class TransactionEngine {
       }).select('id').single();
       txId = tx?.id;
     } else {
-      await supabase.from('allocations').insert({
-        allocation_id: `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        amount: netSale,
-        owner_id: 'SELF',
-        current_holder_type: 'PERSON',
-        current_holder_id: person.id,
-        purpose: 'UNALLOCATED',
-        status: 'ACTIVE',
-        created_at: now, updated_at: now,
-      });
+      const amountOwedToUs = costOfSold + ourProfit;
+      
+      if (profitOptions?.proceedsDestination === 'BANK_ACCOUNT' && profitOptions.targetBankAccountId) {
+        const { data: tx } = await supabase.from('transactions').insert({
+          transaction_type: 'MONEY_RECEIVED',
+          amount: amountOwedToUs,
+          date,
+          from_person_id: person.id,
+          to_bank_account_id: profitOptions.targetBankAccountId,
+          ipo_id: holding.ipo_id,
+          utr,
+          notes: `Sale proceeds & our profit share. Total Sale: ₹${netSale}. Our share: ₹${amountOwedToUs}`,
+          status: 'COMPLETED',
+          created_at: now, updated_at: now,
+        }).select('id').single();
+        txId = tx?.id;
+      } else {
+        await supabase.from('allocations').insert({
+          allocation_id: `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          amount: amountOwedToUs,
+          owner_id: 'SELF',
+          current_holder_type: 'PERSON',
+          current_holder_id: person.id,
+          purpose: 'UNALLOCATED',
+          status: 'ACTIVE',
+          created_at: now, updated_at: now,
+        });
+      }
     }
 
     const { data: investedAllocs } = await supabase
@@ -894,8 +934,7 @@ export class TransactionEngine {
       .select('*')
       .eq('status', 'ACTIVE')
       .eq('purpose', 'INVESTED')
-      .eq('ipo_id', holding.ipo_id)
-      .eq('current_holder_id', holding.person_id);
+      .eq('application_id', holding.application_id);
 
     let costRemaining = costOfSold;
     for (const alloc of investedAllocs || []) {

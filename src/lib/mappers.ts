@@ -172,6 +172,8 @@ export function mapSale(row: SaleRow) {
     sellPrice: row.sell_price,
     charges: row.charges,
     realizedPnL: row.realized_pnl,
+    ourProfitShare: row.our_profit_share ?? row.realized_pnl, // Fallback if not yet migrated
+    friendProfitShare: row.friend_profit_share ?? 0,
     date: row.date,
     returnedToBankAccountId: row.returned_to_bank_account_id,
     utr: row.utr,
