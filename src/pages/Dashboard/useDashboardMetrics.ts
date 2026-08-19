@@ -134,7 +134,8 @@ export function useDashboardMetrics(filters: DashboardFilters) {
         { data: appsData },
         { data: txsData },
         { data: holdingsData },
-        { data: salesData }
+        { data: salesData },
+        { data: allocsData }
       ] = await Promise.all([
         supabase.from('ipos').select('*'),
         supabase.from('people').select('*'),
@@ -142,7 +143,8 @@ export function useDashboardMetrics(filters: DashboardFilters) {
         supabase.from('applications').select('*'),
         supabase.from('transactions').select('*').eq('status', 'COMPLETED'),
         supabase.from('holdings').select('*'),
-        supabase.from('sales').select('*')
+        supabase.from('sales').select('*'),
+        supabase.from('allocations').select('*').eq('status', 'ACTIVE')
       ]);
 
       const allIpos = (iposData || []).map(mapIpo);
@@ -252,29 +254,23 @@ export function useDashboardMetrics(filters: DashboardFilters) {
       const peopleSettlements: CommandCenterMetrics['peopleSettlements'] = [];
       const nowMs = new Date().getTime();
 
+      const allocs = allocsData || [];
+
       allPeople.filter(p => !p.isSelf).forEach(p => {
-        // Funded by you
-        const appsFundedByYou = allApps.filter(a => 
-          a.applicantPersonId === p.id && 
-          a.applicationType === 'FRIEND_DEMAT' && 
-          allBanks.some(b => b.id === a.fundingBankAccountId && b.isActive)
-        );
-
-        const totalFunded = appsFundedByYou.reduce((sum, a) => sum + (a.investmentAmount || a.blockedAmount || 0), 0);
-
-        // Deduct settlements. Since FRIEND_SETTLEMENT doesn't exist, we use MONEY_RECEIVED where fromPersonId is friend.
-        const settlements = allTxs.filter(t => 
-          t.fromPersonId === p.id && 
-          t.transactionType === 'MONEY_RECEIVED'
-        ).reduce((sum, t) => sum + (t.amount || 0), 0);
-
-        const outstanding = totalFunded - settlements;
+        // Calculate outstanding using active allocations (exact same logic as PersonDetailsModal)
+        const personAllocs = allocs.filter(a => a.current_holder_id === p.id && a.current_holder_type === 'PERSON');
         
+        const ipoBlocked = personAllocs.filter(a => a.purpose === 'IPO_BLOCKED').reduce((s, a) => s + a.amount, 0);
+        const unallocated = personAllocs.filter(a => a.purpose === 'UNALLOCATED').reduce((s, a) => s + a.amount, 0);
+        const invested = personAllocs.filter(a => a.purpose === 'INVESTED').reduce((s, a) => s + a.amount, 0);
+        
+        const outstanding = ipoBlocked + unallocated + invested;
+
         let oldestAppDateMs = nowMs;
         if (outstanding > 0) {
-            appsFundedByYou.forEach(a => {
-                if (a.createdAt) {
-                    const d = new Date(a.createdAt).getTime();
+            personAllocs.forEach(a => {
+                if (a.created_at) {
+                    const d = new Date(a.created_at).getTime();
                     if (d < oldestAppDateMs) oldestAppDateMs = d;
                 }
             });
