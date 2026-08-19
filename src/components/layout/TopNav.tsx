@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, Bell, Plus, Calendar, Menu } from 'lucide-react';
+import { Search, Plus, Calendar, Menu } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 
@@ -44,17 +44,6 @@ export const TopNav: React.FC<TopNavProps> = ({ onMenuClick }) => {
         </div>
         <div className="sm:hidden">
           <Button variant="primary" size="sm" className="px-2" icon={<Plus size={16} />} />
-        </div>
-        <button className="relative flex h-9 w-9 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors">
-          <Bell size={18} />
-          <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-accent-red"></span>
-        </button>
-        <div className="h-8 w-8 overflow-hidden rounded-full border border-black/10 shrink-0">
-          <img
-            src="https://api.dicebear.com/7.x/notionists/svg?seed=Kirti&backgroundColor=e6f0fa"
-            alt="Profile"
-            className="h-full w-full object-cover"
-          />
         </div>
       </div>
     </header>

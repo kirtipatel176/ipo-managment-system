@@ -24,6 +24,7 @@ export interface PersonBalanceOverview {
   unallocated: number;
   invested: number;
   currentlyHeld: number;
+  pendingProfit: number;
 }
 
 export interface RefundAction {
@@ -130,6 +131,13 @@ export class TransactionEngine {
 
     const totalReturned = (returnTxs || []).reduce((s, t) => s + t.amount, 0);
 
+    const { data: holdings } = await supabase
+      .from('holdings')
+      .select('unrealized_profit')
+      .eq('person_id', personId);
+
+    const pendingProfit = (holdings || []).reduce((s, h) => s + (h.unrealized_profit || 0), 0);
+
     return {
       personId,
       fullName: person.full_name,
@@ -139,6 +147,7 @@ export class TransactionEngine {
       unallocated,
       invested,
       currentlyHeld: ipoBlocked + unallocated + invested,
+      pendingProfit,
     };
   }
 
@@ -489,7 +498,7 @@ export class TransactionEngine {
     }).eq('id', applicationId);
 
     if (allottedLots > 0) {
-      await supabase.from('holdings').insert({
+      const { error: holdingsErr } = await supabase.from('holdings').insert({
         ipo_id: app.ipo_id,
         person_id: app.applicant_person_id,
         demat_account_id: app.demat_account_id,
@@ -505,6 +514,7 @@ export class TransactionEngine {
         created_at: now,
         updated_at: now,
       });
+      if (holdingsErr) throw new Error(`Failed to create holding: ${holdingsErr.message}`);
     }
 
     const { data: blockedAllocs } = await supabase
@@ -854,7 +864,7 @@ export class TransactionEngine {
       }
     }
 
-    await supabase.from('sales').insert({
+    const { error: salesErr } = await supabase.from('sales').insert({
       holding_id: holdingId,
       ipo_id: holding.ipo_id,
       person_id: holding.person_id,
@@ -872,6 +882,7 @@ export class TransactionEngine {
       created_at: now,
       updated_at: now,
     });
+    if (salesErr) throw new Error(`Failed to record sale: ${salesErr.message}`);
 
     if (sharesToSell === holding.shares) {
       await supabase.from('holdings').delete().eq('id', holdingId);
@@ -885,7 +896,7 @@ export class TransactionEngine {
           .eq('application_id', holding.application_id);
         if (!remainingHoldings || remainingHoldings.length === 0) {
           await supabase.from('applications').update({
-            listing_status: 'COMPLETED',
+            listing_status: 'LISTED', // Mark as LISTED once all shares are sold
             updated_at: now,
           }).eq('id', holding.application_id);
         }
@@ -903,7 +914,7 @@ export class TransactionEngine {
     let txId: number | undefined;
 
     if (isSelf) {
-      const { data: tx } = await supabase.from('transactions').insert({
+      const { data: tx, error: txErr } = await supabase.from('transactions').insert({
         transaction_type: 'IPO_SELL',
         amount: netSale,
         date,
@@ -914,12 +925,13 @@ export class TransactionEngine {
         status: 'COMPLETED',
         created_at: now, updated_at: now,
       }).select('id').single();
+      if (txErr) throw new Error(`Failed to create transaction: ${txErr.message}`);
       txId = tx?.id;
     } else {
       const amountOwedToUs = costOfSold + ourProfit;
       
       if (profitOptions?.proceedsDestination === 'BANK_ACCOUNT' && profitOptions.targetBankAccountId) {
-        const { data: tx } = await supabase.from('transactions').insert({
+        const { data: tx, error: txErr } = await supabase.from('transactions').insert({
           transaction_type: 'MONEY_RECEIVED',
           amount: amountOwedToUs,
           date,
@@ -931,9 +943,10 @@ export class TransactionEngine {
           status: 'COMPLETED',
           created_at: now, updated_at: now,
         }).select('id').single();
+        if (txErr) throw new Error(`Failed to create transaction: ${txErr.message}`);
         txId = tx?.id;
       } else {
-        await supabase.from('allocations').insert({
+        const { error: allocErr } = await supabase.from('allocations').insert({
           allocation_id: `MJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           amount: amountOwedToUs,
           owner_id: 'SELF',
@@ -943,6 +956,7 @@ export class TransactionEngine {
           status: 'ACTIVE',
           created_at: now, updated_at: now,
         });
+        if (allocErr) throw new Error(`Failed to create UNALLOCATED allocation: ${allocErr.message}`);
       }
     }
 

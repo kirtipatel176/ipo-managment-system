@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
 import {
   mapIpo, mapPerson, mapBankAccount, mapApplication, mapTransaction,
-  mapAllocation, mapHolding, mapSale, mapDematAccount
+  mapHolding, mapSale
 } from '../../lib/mappers';
 
 export interface DashboardFilters {
@@ -19,97 +19,63 @@ export interface MoneyFlowChartData {
   netFlow: number;
 }
 
-export interface PnLChartData {
-  period: string;
-  profit: number;
-}
+export interface CommandCenterMetrics {
+  // Key Metrics
+  bankCash: number;
+  ipoBlocked: number;
+  available: number;
+  invested: number;
+  realizedPnL: number;
+  unrealizedPnL: number;
+  totalValue: number;
+  
+  allotmentRate: number;
+  reconciliationHealth: number;
 
-export interface DashboardMetrics {
-  // Summary
-  totalInvested: number;
-  currentValue: number;
-  totalPnL: number;
-  totalPnLPercentage: number;
-  blockedAmount: number;
-  releasedAmount: number;
-  availableUncommitted: number;
-  activeApplicationsCount: number;
-
-  // Money Flow
-  totalFlow: number;
-  flowApplied: number;
-  flowBlocked: number;
-  flowDebited: number;
-  flowReleased: number;
-  flowSales: number;
-  flowInvested: number;
+  // Capital Flow Chart
   moneyFlowChart: MoneyFlowChartData[];
+  
+  // Smart Insights
+  smartInsights: string[];
 
-  // IPO Analytics
-  totalApps: number;
-  allottedApps: number;
-  partialApps: number;
-  notAllottedApps: number;
-  pendingApps: number;
-  successRate: number;
-  previousSuccessRate: number;
-  totalAppliedAmount: number;
-  totalAllottedInvestment: number;
-
-  // Allotment Overview
-  allotmentTable: Array<{
-    id: number;
+  // Applications Grouped by IPO
+  applicationsByIPO: Array<{
+    ipoId: number;
     ipoName: string;
     appliedLots: number;
     allottedLots: number;
-    price: number;
-    invested: number;
-    released: number;
-    status: string;
+    investmentAmount: number;
+    statuses: { [key: string]: number };
+    applicants: any[];
   }>;
 
-  // Current Holdings
-  holdingsTable: Array<{
+  // Bank Accounts
+  bankAccounts: Array<{
     id: number;
-    ipoName: string;
-    holderName: string;
-    qty: number;
-    avgPrice: number;
-    ltp: number;
-    invested: number;
-    current: number;
-    pnl: number;
-    pnlPercent: number;
+    name: string;
+    bankName: string;
+    cash: number;
+    blocked: number;
+    available: number;
+    reconciled: boolean;
   }>;
 
-  // Portfolio Growth Chart
-  portfolioGrowthChart: Array<{
-    date: string;
-    value: number;
-    invested: number;
+  // People & Settlements
+  peopleSettlements: Array<{
+    personId: number;
+    name: string;
+    outstanding: number;
+    agingDays: number;
   }>;
 
-  // Profit & Loss
-  realizedPnL: number;
-  unrealizedPnL: number;
-  pnlChart: PnLChartData[];
+  // Asset Distribution
+  assetDistribution: Array<{ name: string; value: number; color: string }>;
 
-  // Gainers & Losers
-  topGainers: Array<{ ipoName: string; pnlPercent: number; pnl: number }>;
-  topLosers: Array<{ ipoName: string; pnlPercent: number; pnl: number }>;
+  // Holdings
+  holdingsTable: any[];
 
-  // IPO Performance
-  bestPerformingIpo: { name: string; pnlPercent: number } | null;
-  worstPerformingIpo: { name: string; pnlPercent: number } | null;
-  averageIpoReturn: number;
-  totalIposHeld: number;
-
-  // Breakdown
-  investmentBreakdown: Array<{ name: string; value: number; color: string }>;
-  dematDistribution: Array<{ name: string; invested: number; current: number; accountId: number }>;
-
-  // Transactions
-  recentTransactions: Array<{
+  // Recent Activity
+  recentActivity: Array<{
     id: string;
     date: string;
     type: string;
@@ -117,17 +83,18 @@ export interface DashboardMetrics {
     subtitle: string;
     amount: number;
     isPositive: boolean;
+    timestamp: number;
   }>;
-
-  // Action Required
-  actions: Array<{ id: string; message: string; type: string; link: string }>;
+  
+  // Actions Required
+  actionsRequired: Array<{ id: string; message: string; type: 'INFO' | 'WARNING' | 'SUCCESS' | 'DANGER'; link: string }>;
 }
 
 function filterByDateRange(dateString: string | null | undefined, range: DashboardFilters['dateRange']): boolean {
   if (range === 'ALL_TIME') return true;
-  if (!dateString) return true; // Don't exclude records with no date in non-ALL filters
+  if (!dateString) return true;
   const d = new Date(dateString);
-  if (isNaN(d.getTime())) return true; // invalid date — include it
+  if (isNaN(d.getTime())) return true;
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   
@@ -157,27 +124,23 @@ function filterByDateRange(dateString: string | null | undefined, range: Dashboa
 }
 
 export function useDashboardMetrics(filters: DashboardFilters) {
-  return useQuery<DashboardMetrics | undefined>({
+  return useQuery<CommandCenterMetrics | undefined>({
     queryKey: ['dashboardMetrics', filters],
     queryFn: async () => {
       const [
         { data: iposData },
         { data: peopleData },
         { data: banksData },
-        { data: dematsData },
         { data: appsData },
         { data: txsData },
-        { data: allocsData },
         { data: holdingsData },
         { data: salesData }
       ] = await Promise.all([
         supabase.from('ipos').select('*'),
         supabase.from('people').select('*'),
         supabase.from('bank_accounts').select('*'),
-        supabase.from('demat_accounts').select('*'),
         supabase.from('applications').select('*'),
         supabase.from('transactions').select('*').eq('status', 'COMPLETED'),
-        supabase.from('allocations').select('*'),
         supabase.from('holdings').select('*'),
         supabase.from('sales').select('*')
       ]);
@@ -185,30 +148,12 @@ export function useDashboardMetrics(filters: DashboardFilters) {
       const allIpos = (iposData || []).map(mapIpo);
       const allPeople = (peopleData || []).map(mapPerson);
       const allBanks = (banksData || []).map(mapBankAccount);
-      const allDemats = (dematsData || []).map(mapDematAccount);
       const allApps = (appsData || []).map(mapApplication);
       const allTxs = (txsData || []).map(mapTransaction);
-      const allAllocs = (allocsData || []).map(mapAllocation);
       const allHoldings = (holdingsData || []).map(mapHolding);
       const allSales = (salesData || []).map(mapSale);
 
-      // Helper: get person name from demat account
-      const getPersonName = (dematAccountId: number): string => {
-        const demat = allDemats.find(d => d.id === dematAccountId);
-        if (!demat) return 'Unknown';
-        const person = allPeople.find(p => p.id === demat.holderPersonId);
-        return person ? person.fullName : demat.brokerName;
-      };
-
-      const getDematLabel = (dematAccountId: number): string => {
-        const demat = allDemats.find(d => d.id === dematAccountId);
-        if (!demat) return 'Unknown';
-        const person = allPeople.find(p => p.id === demat.holderPersonId);
-        const name = person ? person.fullName : 'Unknown';
-        return `${name} (${demat.brokerName})`;
-      };
-
-      // ─── FILTER DATA ──────────────────────────────────────
+      // --- FILTER DATA based on date range and IPO/Account filters ---
       const filteredApps = allApps.filter(a => {
         if (filters.ipoId !== 'ALL' && a.ipoId !== filters.ipoId) return false;
         if (filters.accountId !== 'ALL' && a.dematAccountId !== filters.accountId) return false;
@@ -228,144 +173,356 @@ export function useDashboardMetrics(filters: DashboardFilters) {
         return true;
       });
 
-      const activeAllocs = allAllocs.filter(a => a.status === 'ACTIVE');
-
       const filteredTxs = allTxs.filter(t => {
         if (filters.ipoId !== 'ALL' && t.ipoId !== filters.ipoId) return false;
         if (!filterByDateRange(t.date, filters.dateRange)) return false;
         return true;
       });
 
-      // ─── CORE FINANCIAL METRICS ────────────────────────────
+      // ============================================
+      // 1. RULE: Bank Cash
+      // bank cash = opening_balance + inflows - outflows for is_active=true
+      // ============================================
+      let globalBankCash = 0;
+      const bankAccountsList: CommandCenterMetrics['bankAccounts'] = [];
 
-      // Holdings-based metrics (actual shares held)
-      const totalInvested = filteredHoldings.reduce((sum, h) => sum + (h.shares * h.averageCost), 0);
-      const currentValue = filteredHoldings.reduce((sum, h) => sum + h.currentValue, 0);
-      const unrealizedPnL = currentValue - totalInvested;
-      const realizedPnL = filteredSales.reduce((sum, s) => sum + (s.ourProfitShare ?? s.realizedPnL ?? 0), 0);
-      const totalPnL = unrealizedPnL + realizedPnL;
-      const totalPnLPercentage = totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0;
-
-      // Blocked = money currently locked in pending IPO applications
-      const blockedAmount = activeAllocs
-        .filter(a => a.purpose === 'IPO_BLOCKED')
-        .reduce((sum, a) => sum + a.amount, 0);
-
-      const activeApplicationsCount = filteredApps.filter(a => a.allotmentStatus === 'PENDING').length;
-
-      // Released = total refunds received from not-allotted applications
-      const releasedAmount = filteredApps.reduce((sum, a) => sum + (a.refundAmount || 0), 0);
-
-      // Bank cash: opening_balance + all inflows - all outflows
-      let bankCash = 0;
-      allBanks.forEach(b => {
+      allBanks.filter(b => b.isActive).forEach(b => {
         let balance = b.openingBalance || 0;
         allTxs.forEach(t => {
           if (t.toBankAccountId === b.id) balance += (t.amount || 0);
           if (t.fromBankAccountId === b.id) balance -= (t.amount || 0);
         });
-        bankCash += balance;
+        
+        globalBankCash += balance;
+
+        // Per account IPO blocked
+        const blockedForAccount = allApps
+          .filter(a => a.fundingBankAccountId === b.id && a.moneyStatus === 'BLOCKED')
+          .reduce((sum, a) => sum + (a.blockedAmount || 0), 0);
+
+        bankAccountsList.push({
+          id: b.id,
+          name: b.accountName,
+          bankName: b.bankName,
+          cash: balance,
+          blocked: blockedForAccount,
+          available: balance - blockedForAccount,
+          reconciled: true, // Placeholder for reconciliation status
+        });
       });
 
-      // Friend/person unallocated money we manage
-      const friendUnallocated = activeAllocs
-        .filter(a => a.purpose === 'UNALLOCATED' && a.currentHolderType === 'PERSON')
-        .reduce((s, a) => s + a.amount, 0);
+      // ============================================
+      // 2. RULE: IPO Blocked
+      // ============================================
+      const ipoBlocked = allApps
+        .filter(a => a.moneyStatus === 'BLOCKED')
+        .reduce((sum, a) => sum + (a.blockedAmount || 0), 0);
 
-      const availableUncommitted = Math.max(0, bankCash - blockedAmount);
+      // ============================================
+      // 3. RULE: Available
+      // ============================================
+      const available = globalBankCash - ipoBlocked;
 
-      // ─── MONEY FLOW ───────────────────────────────────────
+      // ============================================
+      // 4. RULE: Invested
+      // ============================================
+      const invested = filteredApps
+        .filter(a => a.allotmentStatus === 'FULL' || a.allotmentStatus === 'PARTIAL')
+        .reduce((sum, a) => sum + (a.investmentAmount || 0), 0);
 
-      // flowApplied = total capital committed to IPO applications (blocked_amount)
-      const flowApplied = filteredApps.reduce((sum, a) => sum + (a.blockedAmount || 0), 0);
-      const flowBlocked = blockedAmount;
-      // flowDebited = capital that was actually invested (allotted apps)
-      const flowDebited = filteredApps.reduce((sum, a) => sum + (a.investmentAmount || 0), 0);
-      const flowReleased = releasedAmount;
-      const flowSales = filteredSales.reduce((sum, s) => sum + (s.sharesSold * s.sellPrice), 0);
-      const flowInvested = totalInvested;
-      const totalFlow = flowApplied;
+      // ============================================
+      // 5. RULE: Realized P&L
+      // ============================================
+      const realizedPnL = filteredSales.reduce((sum, s) => sum + (s.realizedPnL || 0), 0);
 
-      // ─── IPO APPLICATION ANALYTICS ─────────────────────────
-      const totalApps = filteredApps.length;
-      const allottedApps = filteredApps.filter(a => a.allotmentStatus === 'FULL').length;
-      const partialApps = filteredApps.filter(a => a.allotmentStatus === 'PARTIAL').length;
-      const notAllottedApps = filteredApps.filter(a => a.allotmentStatus === 'NIL').length;
-      const pendingApps = filteredApps.filter(a => a.allotmentStatus === 'PENDING').length;
-      const resolvedApps = totalApps - pendingApps;
-      const successRate = resolvedApps > 0 ? ((allottedApps + partialApps) / resolvedApps) * 100 : 0;
-      // Previous success rate: use actual data, not random
-      const previousSuccessRate = successRate; // No fake data
+      // ============================================
+      // 6. RULE: Unrealized P&L
+      // ============================================
+      const unrealizedPnL = filteredHoldings.reduce((sum, h) => sum + (h.unrealizedProfit || 0), 0);
 
-      const totalAppliedAmount = filteredApps.reduce((sum, a) => sum + (a.blockedAmount || 0), 0);
-      const totalAllottedInvestment = flowDebited;
+      // ============================================
+      // 7. RULE: Total Value
+      // ============================================
+      const currentHoldingsValue = filteredHoldings.reduce((sum, h) => sum + (h.currentValue || 0), 0);
+      const totalValue = globalBankCash + currentHoldingsValue;
 
-      // ─── ALLOTMENT TABLE ──────────────────────────────────
-      const allotmentTable = filteredApps.map(a => {
-        const ipo = allIpos.find(i => i.id === a.ipoId);
-        return {
-          id: a.id ?? 0,
-          ipoName: ipo?.ipoName || 'Unknown',
-          appliedLots: a.appliedLots || 0,
-          allottedLots: a.allottedLots || 0,
-          price: a.ipoPrice || 0,
-          invested: a.investmentAmount || 0,
-          released: a.refundAmount || 0,
-          status: a.allotmentStatus === 'PENDING' ? 'Pending'
-            : a.allotmentStatus === 'FULL' ? 'Allotted'
-            : a.allotmentStatus === 'PARTIAL' ? 'Partial'
-            : 'Not Allotted'
-        };
-      }).sort((a, b) => b.id - a.id).slice(0, 15);
+      // ============================================
+      // 8. RULE: Friend / Person Outstanding
+      // ============================================
+      const peopleSettlements: CommandCenterMetrics['peopleSettlements'] = [];
+      const nowMs = new Date().getTime();
 
-      // ─── HOLDINGS TABLE ───────────────────────────────────
+      allPeople.filter(p => !p.isSelf).forEach(p => {
+        // Funded by you
+        const appsFundedByYou = allApps.filter(a => 
+          a.applicantPersonId === p.id && 
+          a.applicationType === 'FRIEND_DEMAT' && 
+          allBanks.some(b => b.id === a.fundingBankAccountId && b.isActive)
+        );
+
+        const totalFunded = appsFundedByYou.reduce((sum, a) => sum + (a.investmentAmount || a.blockedAmount || 0), 0);
+
+        // Deduct settlements. Since FRIEND_SETTLEMENT doesn't exist, we use MONEY_RECEIVED where fromPersonId is friend.
+        const settlements = allTxs.filter(t => 
+          t.fromPersonId === p.id && 
+          t.transactionType === 'MONEY_RECEIVED'
+        ).reduce((sum, t) => sum + (t.amount || 0), 0);
+
+        const outstanding = totalFunded - settlements;
+        
+        let oldestAppDateMs = nowMs;
+        if (outstanding > 0) {
+            appsFundedByYou.forEach(a => {
+                if (a.createdAt) {
+                    const d = new Date(a.createdAt).getTime();
+                    if (d < oldestAppDateMs) oldestAppDateMs = d;
+                }
+            });
+        }
+        
+        const agingDays = outstanding > 0 ? Math.floor((nowMs - oldestAppDateMs) / (1000 * 60 * 60 * 24)) : 0;
+
+        peopleSettlements.push({
+          personId: p.id,
+          name: p.fullName,
+          outstanding,
+          agingDays,
+        });
+      });
+
+      // ============================================
+      // 9. RULE: Allotment Rate
+      // ============================================
+      const resolvedApps = filteredApps.filter(a => a.allotmentStatus !== 'PENDING');
+      const allottedCount = resolvedApps.filter(a => a.allotmentStatus === 'FULL' || a.allotmentStatus === 'PARTIAL').length;
+      const allotmentRate = resolvedApps.length > 0 ? (allottedCount / resolvedApps.length) * 100 : 0;
+
+      // ============================================
+      // 10. RULE: Reconciliation Health
+      // ============================================
+      const reconciliationHealth = 0; // Placeholder
+
+      // ============================================
+      // Smart Insights Engine
+      // ============================================
+      const smartInsights: string[] = [];
+      
+      // Allotment rate vs baseline
+      if (resolvedApps.length >= 5) {
+        const rate = Math.round(allotmentRate);
+        const relative = rate > 25 ? 'above' : (rate < 15 ? 'below' : 'within');
+        smartInsights.push(`Your allotment rate of ${rate}% is ${relative} the typical retail range (15–25%).`);
+      }
+
+      // Blocked capital reminder
+      if (totalValue > 0 && (ipoBlocked / totalValue) > 0.2) {
+        const blockedApps = allApps.filter(a => a.moneyStatus === 'BLOCKED');
+        if (blockedApps.length > 0) {
+          const soonest = blockedApps.reduce((acc, curr) => {
+            const ipo = allIpos.find(i => i.id === curr.ipoId);
+            if (ipo && ipo.allotmentDate) {
+               if (!acc) return ipo.allotmentDate;
+               return new Date(ipo.allotmentDate) < new Date(acc) ? ipo.allotmentDate : acc;
+            }
+            return acc;
+          }, '');
+          
+          smartInsights.push(`₹${ipoBlocked.toLocaleString('en-IN')} is currently blocked across ${blockedApps.length} applications — the earliest result is expected ${soonest ? new Date(soonest).toLocaleDateString('en-GB') : 'soon'}.`);
+        }
+      }
+
+      // Available capital nudge
+      const openIpos = allIpos.filter(i => i.status === 'OPEN');
+      if (available > 14000 && openIpos.length > 0) {
+        smartInsights.push(`You have ₹${available.toLocaleString('en-IN')} available — ${openIpos[0].ipoName} is open for subscription until ${openIpos[0].closeDate}.`);
+      }
+
+      // Outstanding aging
+      const agedFriends = peopleSettlements.filter(p => p.outstanding > 0 && p.agingDays > 14);
+      if (agedFriends.length > 0) {
+        const p = agedFriends[0];
+        smartInsights.push(`${p.name}'s ₹${p.outstanding.toLocaleString('en-IN')} has been outstanding for ${p.agingDays} days — worth a nudge.`);
+      }
+
+      // Best/worst performer
+      if (filteredSales.length >= 3) {
+        const sortedSales = [...filteredSales].sort((a, b) => (b.realizedPnL || 0) - (a.realizedPnL || 0));
+        const best = sortedSales[0];
+        if (best && best.realizedPnL && best.realizedPnL > 0) {
+            const ipo = allIpos.find(i => i.id === best.ipoId);
+            const returnPct = best.costBasis > 0 ? ((best.realizedPnL / best.costBasis) * 100).toFixed(1) : 0;
+            smartInsights.push(`${ipo?.ipoName || 'An IPO'} was your best return this period at ${returnPct}%.`);
+        }
+      }
+
+      // Duplicate UTR anomaly (mocking detect logic)
+      const utrCounts: Record<string, number> = {};
+      allTxs.forEach(t => {
+        if (t.utr && t.utr.trim().length > 3) {
+          utrCounts[t.utr] = (utrCounts[t.utr] || 0) + 1;
+        }
+      });
+      const duplicateUtrs = Object.keys(utrCounts).filter(k => utrCounts[k] > 1);
+      if (duplicateUtrs.length > 0) {
+        smartInsights.push(`Two or more transactions share UTR ${duplicateUtrs[0]} — one is likely a duplicate entry.`);
+      }
+
+      if (smartInsights.length === 0) {
+        smartInsights.push("Everything's reconciled and nothing needs attention right now.");
+      }
+
+      // ============================================
+      // Applications Grouped by IPO
+      // ============================================
+      const appsByIpoMap = new Map<number, CommandCenterMetrics['applicationsByIPO'][0]>();
+      
+      filteredApps.forEach(a => {
+        if (!appsByIpoMap.has(a.ipoId)) {
+          const ipo = allIpos.find(i => i.id === a.ipoId);
+          appsByIpoMap.set(a.ipoId, {
+            ipoId: a.ipoId,
+            ipoName: ipo?.ipoName || 'Unknown IPO',
+            appliedLots: 0,
+            allottedLots: 0,
+            investmentAmount: 0,
+            statuses: {},
+            applicants: []
+          });
+        }
+        
+        const grp = appsByIpoMap.get(a.ipoId)!;
+        grp.appliedLots += (a.appliedLots || 0);
+        grp.allottedLots += (a.allottedLots || 0);
+        grp.investmentAmount += (a.investmentAmount || 0);
+        
+        const status = a.allotmentStatus || 'UNKNOWN';
+        grp.statuses[status] = (grp.statuses[status] || 0) + 1;
+        
+        const applicantName = allPeople.find(p => p.id === a.applicantPersonId)?.fullName || 'Unknown';
+        grp.applicants.push({ ...a, applicantName });
+      });
+
+      const applicationsByIPO = Array.from(appsByIpoMap.values())
+        .sort((a, b) => b.ipoId - a.ipoId)
+        .slice(0, 15);
+
+      // ============================================
+      // Asset Distribution
+      // ============================================
+      const assetDistribution = [
+        { name: 'Bank Cash', value: available, color: '#10b981' }, // emerald-500
+        { name: 'IPO Blocked', value: ipoBlocked, color: '#f59e0b' }, // amber-500
+        { name: 'Investments', value: currentHoldingsValue, color: '#6366f1' }, // indigo-500
+      ].filter(d => d.value > 0);
+
+      // ============================================
+      // Recent Activity
+      // ============================================
+      const recentActivity: CommandCenterMetrics['recentActivity'] = [];
+
+      filteredTxs.forEach(t => {
+        let type = 'EXTERNAL_DEPOSIT'; // Default safe fallback
+        if (t.transactionType === 'MONEY_SENT') type = 'EXTERNAL_PAYMENT';
+        if (t.transactionType === 'MONEY_RECEIVED') type = 'EXTERNAL_DEPOSIT';
+        if (t.transactionType === 'SELF_TRANSFER') type = 'OWN_ACCOUNT_TRANSFER';
+        if (t.transactionType === 'IPO_REFUND') type = 'IPO_REFUND';
+        if (t.transactionType === 'IPO_SELL') type = 'IPO_SALE_PROCEEDS';
+        if (t.transactionType === 'IPO_BLOCKED') type = 'IPO_FUNDING';
+
+        const isInflow = type === 'EXTERNAL_DEPOSIT' || type === 'IPO_REFUND' || type === 'IPO_SALE_PROCEEDS' || type === 'FRIEND_FUNDING_RECEIVED';
+
+        const ipo = t.ipoId ? allIpos.find(i => i.id === t.ipoId) : null;
+        let subtitle = t.notes || '';
+        if (ipo) subtitle = ipo.ipoName;
+        if (!subtitle) {
+           subtitle = type.split('_').map((w: string) => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+        }
+        
+        let title = type.split('_').map((w: string) => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+
+        recentActivity.push({
+          id: `tx-${t.id}`,
+          date: t.date || '',
+          type,
+          title,
+          subtitle,
+          amount: t.amount || 0,
+          isPositive: isInflow,
+          timestamp: t.createdAt ? new Date(t.createdAt).getTime() : 0
+        });
+      });
+
+      const sortedRecentActivity = recentActivity
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, 10);
+
+      // ============================================
+      // Actions Required
+      // ============================================
+      const actionsRequired: CommandCenterMetrics['actionsRequired'] = [];
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      allIpos.forEach(ipo => {
+        if (ipo.allotmentDate === todayStr) {
+          actionsRequired.push({
+            id: `allot-${ipo.id}`,
+            message: `${ipo.ipoName} allotment is today`,
+            type: 'INFO',
+            link: '/applications'
+          });
+        }
+      });
+
+      const pendingAppsCount = allApps.filter(a => a.allotmentStatus === 'PENDING').length;
+      if (pendingAppsCount > 0) {
+        actionsRequired.push({
+          id: 'pending-apps',
+          message: `${pendingAppsCount} application(s) pending allotment`,
+          type: 'WARNING',
+          link: '/applications'
+        });
+      }
+
+      openIpos.forEach(ipo => {
+        actionsRequired.push({
+          id: `open-${ipo.id}`,
+          message: `${ipo.ipoName} is open for subscription`,
+          type: 'INFO',
+          link: '/ipos'
+        });
+      });
+
+      if (reconciliationHealth > 0) {
+        actionsRequired.push({
+          id: 'reconciliation',
+          message: `${reconciliationHealth} unreconciled bank account(s)`,
+          type: 'DANGER',
+          link: '/accounts'
+        });
+      }
+
+      // ============================================
+      // Holdings Table & Charts
+      // ============================================
       const holdingsTable = filteredHoldings.map(h => {
         const ipo = allIpos.find(i => i.id === h.ipoId);
-        const invested = (h.shares || 0) * (h.averageCost || 0);
-        const current = h.currentValue || 0;
-        const pnl = h.unrealizedProfit || 0;
-        const pnlPercent = h.unrealizedROI || 0;
+        const personName = allPeople.find(p => p.id === h.personId)?.fullName || 'Unknown';
         return {
           id: h.id ?? 0,
           ipoName: ipo?.ipoName || 'Unknown',
-          holderName: getPersonName(h.dematAccountId),
+          holderName: personName,
           qty: h.shares || 0,
           avgPrice: h.averageCost || 0,
           ltp: h.currentPrice || 0,
-          invested,
-          current,
-          pnl,
-          pnlPercent
+          invested: (h.shares || 0) * (h.averageCost || 0),
+          current: h.currentValue || 0,
+          pnl: h.unrealizedProfit || 0,
+          pnlPercent: h.unrealizedROI || 0
         };
       }).sort((a, b) => b.current - a.current);
 
-      // Top Gainers / Losers — only from real holding data
-      const topGainers = [...holdingsTable]
-        .filter(h => h.pnl > 0)
-        .sort((a, b) => b.pnlPercent - a.pnlPercent)
-        .map(h => ({ ipoName: h.ipoName, pnlPercent: h.pnlPercent, pnl: h.pnl }))
-        .slice(0, 3);
-      const topLosers = [...holdingsTable]
-        .filter(h => h.pnl < 0)
-        .sort((a, b) => a.pnlPercent - b.pnlPercent)
-        .map(h => ({ ipoName: h.ipoName, pnlPercent: h.pnlPercent, pnl: h.pnl }))
-        .slice(0, 3);
-
-      const bestPerformingIpo = topGainers.length > 0
-        ? { name: topGainers[0].ipoName, pnlPercent: topGainers[0].pnlPercent }
-        : null;
-      const worstPerformingIpo = topLosers.length > 0
-        ? { name: topLosers[0].ipoName, pnlPercent: topLosers[0].pnlPercent }
-        : null;
-      const averageIpoReturn = holdingsTable.length > 0
-        ? holdingsTable.reduce((sum, h) => sum + h.pnlPercent, 0) / holdingsTable.length
-        : 0;
-
-      // ─── MONTHLY CHARTS (Real Data Only) ───────────────────
       const moneyFlowChart: MoneyFlowChartData[] = [];
-      const pnlChart: PnLChartData[] = [];
       const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
       const now = new Date();
       const currentYear = now.getFullYear();
 
@@ -373,28 +530,23 @@ export function useDashboardMetrics(filters: DashboardFilters) {
         let mInvested = 0;
         let mReleased = 0;
         let mSales = 0;
-        let mProfit = 0;
 
         filteredApps.forEach(a => {
-          const dateStr = a.createdAt;
-          if (!dateStr) return;
-          const d = new Date(dateStr);
+          if (!a.createdAt) return;
+          const d = new Date(a.createdAt);
           if (isNaN(d.getTime())) return;
           if (d.getMonth() === i && d.getFullYear() === currentYear) {
-            // Use blockedAmount for capital committed (this is the actual money that moved)
             mInvested += (a.blockedAmount || 0);
             mReleased += (a.refundAmount || 0);
           }
         });
 
         filteredSales.forEach(s => {
-          const dateStr = s.date;
-          if (!dateStr) return;
-          const d = new Date(dateStr);
+          if (!s.date) return;
+          const d = new Date(s.date);
           if (isNaN(d.getTime())) return;
           if (d.getMonth() === i && d.getFullYear() === currentYear) {
             mSales += ((s.sharesSold || 0) * (s.sellPrice || 0));
-            mProfit += (s.ourProfitShare ?? s.realizedPnL ?? 0);
           }
         });
 
@@ -405,217 +557,27 @@ export function useDashboardMetrics(filters: DashboardFilters) {
           sales: mSales,
           netFlow: mInvested - mReleased - mSales
         });
-
-        pnlChart.push({
-          period: months[i],
-          profit: mProfit
-        });
       }
-
-      // ─── INVESTMENT BREAKDOWN (Real data only) ─────────────
-      const investmentBreakdown = [
-        { name: 'IPO Holdings', value: totalInvested, color: '#635bff' },
-        { name: 'Bank Cash', value: Math.max(0, bankCash), color: '#22c55e' },
-        { name: 'IPO Blocked', value: blockedAmount, color: '#f5a623' },
-        { name: 'Friend Balances', value: friendUnallocated, color: '#8d49f7' }
-      ].filter(d => d.value > 0);
-
-      // ─── DEMAT / BROKER DISTRIBUTION ───────────────────────
-      // Group holdings by demat account, show person name + broker
-      const dematDistMap: Record<number, { invested: number; current: number }> = {};
-      filteredHoldings.forEach(h => {
-        const accId = h.dematAccountId;
-        if (!dematDistMap[accId]) dematDistMap[accId] = { invested: 0, current: 0 };
-        dematDistMap[accId].invested += ((h.shares || 0) * (h.averageCost || 0));
-        dematDistMap[accId].current += (h.currentValue || 0);
-      });
-      const dematDistribution = Object.entries(dematDistMap).map(([accId, data]) => ({
-        accountId: Number(accId),
-        name: getDematLabel(Number(accId)),
-        invested: data.invested,
-        current: data.current
-      }));
-
-      // ─── RECENT TRANSACTIONS (Real data, sorted by date) ──
-      const recentActivity: Array<{
-        id: string;
-        date: string;
-        type: string;
-        title: string;
-        subtitle: string;
-        amount: number;
-        isPositive: boolean;
-        timestamp: number;
-      }> = [];
-
-      // Add actual transactions
-      filteredTxs.forEach(t => {
-        const ipo = t.ipoId ? allIpos.find(i => i.id === t.ipoId) : null;
-        const txType = t.transactionType || '';
-        const humanType = txType.split('_').map((w: string) => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
-        const isInflow = txType === 'MONEY_RECEIVED' || txType === 'IPO_REFUND' || txType === 'IPO_SELL';
-
-        let subtitle = t.notes || '';
-        if (ipo) subtitle = ipo.ipoName;
-        if (!subtitle) subtitle = humanType;
-
-        recentActivity.push({
-          id: `tx-${t.id}`,
-          date: t.date || '',
-          type: txType,
-          title: humanType,
-          subtitle,
-          amount: t.amount || 0,
-          isPositive: isInflow,
-          timestamp: t.createdAt ? new Date(t.createdAt).getTime() : 0
-        });
-      });
-
-      // Add recent applications
-      filteredApps.forEach(a => {
-        const ipo = allIpos.find(i => i.id === a.ipoId);
-        const person = getPersonName(a.dematAccountId);
-        recentActivity.push({
-          id: `app-${a.id}`,
-          date: a.createdAt ? a.createdAt.split('T')[0] : '',
-          type: 'APPLICATION',
-          title: `${ipo?.ipoName || 'IPO'} Application`,
-          subtitle: `${person} • ${a.appliedLots || 0} lot(s)`,
-          amount: a.blockedAmount || a.investmentAmount || 0,
-          isPositive: false,
-          timestamp: a.createdAt ? new Date(a.createdAt).getTime() : 0
-        });
-      });
-
-      const recentTransactions = recentActivity
-        .sort((a, b) => b.timestamp - a.timestamp)
-        .slice(0, 10);
-
-      // ─── ACTIONS REQUIRED (Real data) ──────────────────────
-      const actions: Array<{ id: string; message: string; type: string; link: string }> = [];
-      const todayStr = new Date().toISOString().split('T')[0];
-
-      // IPOs with allotment today
-      allIpos.forEach(ipo => {
-        if (ipo.allotmentDate === todayStr) {
-          actions.push({
-            id: `allot-${ipo.id}`,
-            message: `${ipo.ipoName} allotment is today — check allotment status`,
-            type: 'INFO',
-            link: '/applications'
-          });
-        }
-      });
-
-      // Pending applications (waiting for allotment)
-      if (activeApplicationsCount > 0) {
-        actions.push({
-          id: 'pending-apps',
-          message: `${activeApplicationsCount} application(s) pending allotment result`,
-          type: 'WARNING',
-          link: '/applications'
-        });
-      }
-
-      // IPOs open for subscription
-      const openIpos = allIpos.filter(i => i.status === 'OPEN' || i.status === 'UPCOMING');
-      if (openIpos.length > 0) {
-        openIpos.forEach(ipo => {
-          actions.push({
-            id: `open-${ipo.id}`,
-            message: `${ipo.ipoName} is ${ipo.status === 'OPEN' ? 'open for subscription' : 'upcoming'} (${ipo.openDate})`,
-            type: 'INFO',
-            link: '/ipos'
-          });
-        });
-      }
-
-      // Friend balances to settle
-      if (friendUnallocated > 0) {
-        actions.push({
-          id: 'friend-unalloc',
-          message: `₹${friendUnallocated.toLocaleString('en-IN')} in friend accounts needs settlement`,
-          type: 'SUCCESS',
-          link: '/people'
-        });
-      }
-
-      // Holdings with no current price update (listing pending)
-      const pendingListings = filteredHoldings.filter(h => {
-        const app = allApps.find(a => a.id === h.applicationId);
-        return app && app.listingStatus === 'LISTING_PENDING';
-      });
-      if (pendingListings.length > 0) {
-        const ipoNames = [...new Set(pendingListings.map(h => {
-          const ipo = allIpos.find(i => i.id === h.ipoId);
-          return ipo?.ipoName || 'Unknown';
-        }))];
-        actions.push({
-          id: 'listing-pending',
-          message: `${ipoNames.join(', ')} — listing pending, update market price when listed`,
-          type: 'WARNING',
-          link: '/holdings'
-        });
-      }
-
-      // ─── PORTFOLIO GROWTH (Real cumulative data) ───────────
-      // Build from actual application/holding creation dates
-      const portfolioGrowthChart: Array<{ date: string; value: number; invested: number }> = [];
-      // Use months that have actual activity
-      const activeMonths = new Set<string>();
-      filteredApps.forEach(a => {
-        if (a.createdAt) {
-          const d = new Date(a.createdAt);
-          if (!isNaN(d.getTime())) {
-            activeMonths.add(months[d.getMonth()]);
-          }
-        }
-      });
-      // Show last 6 months or active months
-      const last6 = [];
-      for (let i = 5; i >= 0; i--) {
-        const mIdx = (now.getMonth() - i + 12) % 12;
-        last6.push(months[mIdx]);
-      }
-
-      let cumulativeInvested = 0;
-      let cumulativeValue = 0;
-      last6.forEach(month => {
-        const mIdx = months.indexOf(month);
-        // Add investments from this month
-        filteredApps.forEach(a => {
-          if (!a.createdAt) return;
-          const d = new Date(a.createdAt);
-          if (isNaN(d.getTime())) return;
-          if (d.getMonth() === mIdx && d.getFullYear() === currentYear) {
-            cumulativeInvested += (a.investmentAmount || 0);
-          }
-        });
-        // For the current month, use actual currentValue from holdings
-        if (month === months[now.getMonth()]) {
-          cumulativeValue = currentValue;
-        } else {
-          cumulativeValue = cumulativeInvested; // Before listing, value = invested cost
-        }
-        portfolioGrowthChart.push({
-          date: month,
-          invested: cumulativeInvested,
-          value: cumulativeValue
-        });
-      });
 
       return {
-        totalInvested, currentValue, totalPnL, totalPnLPercentage,
-        blockedAmount, releasedAmount, availableUncommitted, activeApplicationsCount,
-        totalFlow, flowApplied, flowBlocked, flowDebited, flowReleased, flowSales, flowInvested,
+        bankCash: globalBankCash,
+        ipoBlocked,
+        available,
+        invested,
+        realizedPnL,
+        unrealizedPnL,
+        totalValue,
+        allotmentRate,
+        reconciliationHealth,
         moneyFlowChart,
-        totalApps, allottedApps, partialApps, notAllottedApps, pendingApps, successRate, previousSuccessRate,
-        totalAppliedAmount, totalAllottedInvestment,
-        allotmentTable, holdingsTable,
-        realizedPnL, unrealizedPnL, pnlChart,
-        topGainers, topLosers, bestPerformingIpo, worstPerformingIpo, averageIpoReturn, totalIposHeld: holdingsTable.length,
-        investmentBreakdown, dematDistribution, recentTransactions, actions,
-        portfolioGrowthChart
+        smartInsights,
+        applicationsByIPO,
+        bankAccounts: bankAccountsList,
+        peopleSettlements,
+        assetDistribution,
+        holdingsTable,
+        recentActivity: sortedRecentActivity,
+        actionsRequired: actionsRequired.sort((a, _b) => a.type === 'DANGER' ? -1 : 1).slice(0, 4)
       };
     },
     refetchInterval: 30000,

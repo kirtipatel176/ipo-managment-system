@@ -1,45 +1,107 @@
 import React from 'react';
-import { Card } from '../../../components/ui/Card';
-import type { DashboardMetrics } from '../useDashboardMetrics';
-import { ArrowDownLeft, ArrowUpRight, Activity } from 'lucide-react';
+import { FileText, ArrowLeftRight, ArrowDownLeft, ArrowUpRight, CornerUpLeft, Banknote, History } from 'lucide-react';
+import type { CommandCenterMetrics } from '../useDashboardMetrics';
 
-interface Props {
-  metrics: DashboardMetrics;
-  formatCurrency: (v: number) => string;
+interface RecentTransactionsProps {
+  data: CommandCenterMetrics['recentActivity'];
+  formatCurrency: (val: number) => string;
 }
 
-export const RecentTransactions: React.FC<Props> = ({ metrics, formatCurrency }) => {
+export const RecentTransactions: React.FC<RecentTransactionsProps> = ({ data, formatCurrency }) => {
   return (
-    <Card noPadding className="flex flex-col">
-      <div className="flex items-center justify-between border-b border-black/5 px-6 py-4 bg-bg-secondary/30">
-        <h3 className="font-semibold text-text-primary text-sm flex items-center gap-2">
-          <Activity size={16} className="text-accent-blue" />
-          Recent Activity
-        </h3>
-        <span className="text-xs text-text-tertiary">{metrics.recentTransactions.length} items</span>
+    <div className="bento-card p-6 group">
+      <div className="flex items-center gap-2 mb-6">
+        <div className="w-8 h-8 rounded-full bg-bg-tertiary flex items-center justify-center text-text-secondary">
+          <History size={16} />
+        </div>
+        <h2 className="text-lg font-bold text-text-primary tracking-tight">Recent activity</h2>
       </div>
-      <div className="divide-y divide-black/5">
-        {metrics.recentTransactions.length === 0 ? (
-          <p className="text-sm text-text-tertiary text-center py-8">No recent activity found.</p>
-        ) : (
-          metrics.recentTransactions.map(tx => (
-            <div key={tx.id} className="flex items-center justify-between px-6 py-3 hover:bg-bg-secondary/30 transition-colors">
-              <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-full ${tx.isPositive ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'}`}>
-                  {tx.isPositive ? <ArrowDownLeft size={16} /> : <ArrowUpRight size={16} />}
+
+      {data.length === 0 ? (
+        <div className="flex flex-col items-center justify-center min-h-[150px] text-center border border-dashed border-border-color rounded-xl bg-bg-secondary/50">
+          <p className="text-text-secondary mb-2 font-medium">No recent activity</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {data.map((tx) => {
+            let Icon = FileText;
+            let iconColor = 'text-text-secondary';
+            let iconBg = 'bg-bg-tertiary';
+            let amountColor = 'text-text-primary';
+            let sign = '';
+
+            // Map type-to-visuals per §4
+            switch (tx.type) {
+              case 'IPO_FUNDING':
+                Icon = FileText;
+                iconColor = 'text-accent-red';
+                iconBg = 'bg-accent-red/10';
+                amountColor = 'text-accent-red';
+                sign = '-';
+                break;
+              case 'OWN_ACCOUNT_TRANSFER':
+                Icon = ArrowLeftRight;
+                iconColor = 'text-text-secondary';
+                iconBg = 'bg-bg-tertiary';
+                amountColor = 'text-text-secondary';
+                sign = '';
+                break;
+              case 'FRIEND_FUNDING_RECEIVED':
+              case 'EXTERNAL_DEPOSIT':
+                Icon = ArrowDownLeft;
+                iconColor = 'text-accent-green';
+                iconBg = 'bg-accent-green/10';
+                amountColor = 'text-accent-green';
+                sign = '+';
+                break;
+              case 'FRIEND_SETTLEMENT':
+              case 'EXTERNAL_PAYMENT':
+                Icon = ArrowUpRight;
+                iconColor = 'text-accent-red';
+                iconBg = 'bg-accent-red/10';
+                amountColor = 'text-accent-red';
+                sign = '-';
+                break;
+              case 'IPO_REFUND':
+                Icon = CornerUpLeft;
+                iconColor = 'text-accent-green';
+                iconBg = 'bg-accent-green/10';
+                amountColor = 'text-accent-green';
+                sign = '+';
+                break;
+              case 'IPO_SALE_PROCEEDS':
+                Icon = Banknote;
+                iconColor = 'text-accent-green';
+                iconBg = 'bg-accent-green/10';
+                amountColor = 'text-accent-green';
+                sign = '+';
+                break;
+              default:
+                break;
+            }
+
+            return (
+              <div 
+                key={tx.id} 
+                className="flex items-center justify-between p-3 rounded-xl border border-transparent table-row-hover group"
+              >
+                <div className="flex items-center gap-4">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform duration-300 ${iconBg} ${iconColor}`}>
+                    <Icon size={18} />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-sm text-text-primary group-hover:text-accent-blue transition-colors duration-300">{tx.title}</h3>
+                    <p className="text-xs text-text-secondary mt-0.5">{tx.subtitle} • {tx.date}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm font-medium text-text-primary">{tx.title}</p>
-                  <p className="text-[11px] text-text-secondary">{tx.subtitle} • {tx.date}</p>
+                <div className={`font-semibold tabular-nums text-[15px] ${amountColor}`}>
+                  {sign}{formatCurrency(tx.amount)}
                 </div>
               </div>
-              <span className={`text-sm font-semibold ${tx.isPositive ? 'text-accent-green' : 'text-text-primary'}`}>
-                {tx.isPositive ? '+' : '-'}{formatCurrency(Math.abs(tx.amount))}
-              </span>
-            </div>
-          ))
-        )}
-      </div>
-    </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 };

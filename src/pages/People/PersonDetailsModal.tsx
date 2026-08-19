@@ -24,18 +24,27 @@ export const PersonDetailsModal: React.FC<Props> = ({ isOpen, onClose, personId 
         { data: personData },
         { data: appsData },
         { data: txsData },
-        { data: iposData }
+        { data: iposData },
+        { data: allocsData },
+        { data: holdingsData },
+        { data: salesData },
       ] = await Promise.all([
         supabase.from('people').select('*').eq('id', personId).single(),
         supabase.from('applications').select('*').eq('applicant_person_id', personId),
         supabase.from('transactions').select('*').or(`from_person_id.eq.${personId},to_person_id.eq.${personId}`),
-        supabase.from('ipos').select('*')
+        supabase.from('ipos').select('*'),
+        supabase.from('allocations').select('*').eq('current_holder_id', personId).eq('current_holder_type', 'PERSON').eq('status', 'ACTIVE'),
+        supabase.from('holdings').select('*').eq('person_id', personId),
+        supabase.from('sales').select('*').eq('person_id', personId),
       ]);
 
       const person = personData ? mapPerson(personData) : null;
       const apps = (appsData || []).map(mapApplication);
       const txs = (txsData || []).map(mapTransaction);
       const ipos = (iposData || []).map(mapIpo);
+      const allocs = allocsData || [];
+      const holdings = holdingsData || [];
+      const sales = salesData || [];
 
       const populatedApps = apps.map(app => {
         const ipo = ipos.find(i => i.id === app.ipoId);
@@ -51,7 +60,25 @@ export const PersonDetailsModal: React.FC<Props> = ({ isOpen, onClose, personId 
         return { ...tx, ipoName };
       }).reverse();
 
-      return { person, applications: populatedApps, transactions: populatedTxs };
+      // Balance summary
+      const sentTxs = txs.filter(t => t.toPersonId === personId && !!t.fromBankAccountId);
+      const returnTxs = txs.filter(t => t.fromPersonId === personId && !!t.toBankAccountId);
+      const totalSent = sentTxs.reduce((s, t) => s + t.amount, 0);
+      const totalReturned = returnTxs.reduce((s, t) => s + t.amount, 0);
+
+      const ipoBlocked = allocs.filter(a => a.purpose === 'IPO_BLOCKED').reduce((s, a) => s + a.amount, 0);
+      const unallocated = allocs.filter(a => a.purpose === 'UNALLOCATED').reduce((s, a) => s + a.amount, 0);
+      const invested = allocs.filter(a => a.purpose === 'INVESTED').reduce((s, a) => s + a.amount, 0);
+      const currentlyHeld = ipoBlocked + unallocated + invested;
+
+      const pendingProfit = holdings.reduce((s, h) => s + (h.unrealized_profit || 0), 0);
+      const totalRealizedProfit = sales.reduce((s, s2) => s + (s2.our_profit_share || 0), 0);
+
+      return {
+        person, applications: populatedApps, transactions: populatedTxs,
+        totalSent, totalReturned, ipoBlocked, unallocated, invested,
+        currentlyHeld, pendingProfit, totalRealizedProfit
+      };
     },
     enabled: !!personId,
   });
@@ -63,13 +90,48 @@ export const PersonDetailsModal: React.FC<Props> = ({ isOpen, onClose, personId 
     </Modal>
   );
 
-  const { person, applications, transactions } = data;
+  const { person, applications, transactions, totalSent, totalReturned, ipoBlocked, currentlyHeld, pendingProfit, totalRealizedProfit } = data;
   
   const formatCurrency = (val: number) => 
     new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(val);
+  const formatCurrencyFull = (val: number) => 
+    new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(val);
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={`${person?.fullName} - Details`} className="max-w-4xl">
+      {/* Balance Summary */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mx-4 my-3 p-3 rounded-xl bg-bg-secondary/50 border border-black/5">
+        <div className="text-center">
+          <div className="text-xs text-text-tertiary mb-1">Total Sent</div>
+          <div className="text-sm font-bold text-text-primary">{formatCurrency(totalSent)}</div>
+        </div>
+        <div className="text-center">
+          <div className="text-xs text-text-tertiary mb-1">Returned</div>
+          <div className="text-sm font-bold text-accent-green">{formatCurrency(totalReturned)}</div>
+        </div>
+        <div className="text-center">
+          <div className="text-xs text-text-tertiary mb-1">Still Held</div>
+          <div className="text-sm font-bold text-accent-orange">{formatCurrency(currentlyHeld)}</div>
+          {ipoBlocked > 0 && <div className="text-[10px] text-text-tertiary">₹{ipoBlocked.toLocaleString('en-IN')} blocked</div>}
+        </div>
+        <div className="text-center">
+          <div className="text-xs text-text-tertiary mb-1">Profit</div>
+          {pendingProfit !== 0 ? (
+            <div className={`text-sm font-bold ${pendingProfit > 0 ? 'text-accent-green' : 'text-accent-red'}`}>
+              {formatCurrencyFull(pendingProfit)}
+              <span className="text-[10px] font-normal text-text-tertiary ml-1">pending</span>
+            </div>
+          ) : totalRealizedProfit > 0 ? (
+            <div className="text-sm font-bold text-accent-green">{formatCurrency(totalRealizedProfit)}</div>
+          ) : (
+            <div className="text-sm text-text-tertiary">—</div>
+          )}
+          {totalRealizedProfit > 0 && pendingProfit !== 0 && (
+            <div className="text-[10px] text-text-tertiary">+{formatCurrency(totalRealizedProfit)} realized</div>
+          )}
+        </div>
+      </div>
+
       <div className="flex border-b border-black/5 mb-4 px-2 pt-2">
         <button 
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'applications' ? 'border-accent-blue text-accent-blue' : 'border-transparent text-text-secondary hover:text-text-primary'}`}

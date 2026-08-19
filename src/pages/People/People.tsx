@@ -55,13 +55,15 @@ export const People: React.FC = () => {
         { data: appData },
         { data: dData },
         { data: aData },
-        { data: tData }
+        { data: tData },
+        { data: hData }
       ] = await Promise.all([
         supabase.from('people').select('*').eq('is_active', true),
         supabase.from('applications').select('*'),
         supabase.from('demat_accounts').select('*').eq('is_active', true),
         supabase.from('allocations').select('*').eq('status', 'ACTIVE'),
-        supabase.from('transactions').select('*').eq('status', 'COMPLETED')
+        supabase.from('transactions').select('*').eq('status', 'COMPLETED'),
+        supabase.from('holdings').select('*')
       ]);
 
       const peopleList = (pData || []).map(mapPerson);
@@ -69,6 +71,7 @@ export const People: React.FC = () => {
       const demats = dData || [];
       const allocs = (aData || []).map(mapAllocation);
       const txs = (tData || []).map(mapTransaction);
+      const holdings = hData || [];
 
       return peopleList.map(p => {
         const applicationsCount = apps.filter(a => a.applicantPersonId === p.id).length;
@@ -85,6 +88,8 @@ export const People: React.FC = () => {
         const totalSent = sentTxs.reduce((s, t) => s + t.amount, 0);
         const moneyComeBack = returnTxs.reduce((s, t) => s + t.amount, 0);
         
+        const pendingProfit = holdings.filter(h => h.person_id === p.id).reduce((s, h) => s + (h.unrealized_profit || 0), 0);
+
         const pending = currentlyHeld;
         const status = pending === 0 ? 'Settled' : 'Active';
 
@@ -94,6 +99,7 @@ export const People: React.FC = () => {
           dematCount,
           totalSent, moneyComeBack,
           ipoBlocked, unallocated, invested, currentlyHeld,
+          pendingProfit,
           pending, status,
         };
       });
@@ -271,11 +277,23 @@ export const People: React.FC = () => {
                   </span>
                 </TableCell>
                 <TableCell className="text-right">
-                  {person.pending > 0 ? (
-                    <span className="font-bold text-accent-red">{formatCurrency(person.pending)}</span>
-                  ) : (
-                    <span className="text-text-tertiary">₹0</span>
-                  )}
+                  <div className="flex flex-col items-end">
+                    {person.pending > 0 ? (
+                      <span className="font-bold text-accent-red">{formatCurrency(person.pending)}</span>
+                    ) : (
+                      <span className="text-text-tertiary">₹0</span>
+                    )}
+                    {person.pendingProfit > 0 && (
+                      <span className="text-xs font-medium text-accent-green mt-0.5">
+                        +{formatCurrency(person.pendingProfit)} profit
+                      </span>
+                    )}
+                    {person.pendingProfit < 0 && (
+                      <span className="text-xs font-medium text-accent-red mt-0.5">
+                        {formatCurrency(person.pendingProfit)} loss
+                      </span>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell className="text-center">
                   <Badge variant={person.status === 'Active' ? 'warning' : 'success'}>

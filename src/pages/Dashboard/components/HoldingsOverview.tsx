@@ -1,74 +1,55 @@
 import React from 'react';
-import { Card } from '../../../components/ui/Card';
-import type { DashboardMetrics } from '../useDashboardMetrics';
-import { Briefcase } from 'lucide-react';
+import type { CommandCenterMetrics } from '../useDashboardMetrics';
 
-interface Props {
-  metrics: DashboardMetrics;
-  formatCurrency: (v: number) => string;
+interface HoldingsOverviewProps {
+  data: CommandCenterMetrics['holdingsTable'];
+  formatCurrency: (val: number) => string;
 }
 
-export const HoldingsOverview: React.FC<Props> = ({ metrics, formatCurrency }) => {
+export const HoldingsOverview: React.FC<HoldingsOverviewProps> = ({ data, formatCurrency }) => {
   return (
-    <Card noPadding className="overflow-hidden flex flex-col h-full">
-      <div className="flex items-center justify-between border-b border-black/5 px-6 py-4 bg-bg-secondary/30">
-        <h3 className="font-semibold text-text-primary text-sm flex items-center gap-2">
-          <Briefcase size={16} className="text-accent-blue" />
-          Current Holdings ({metrics.holdingsTable.length})
-        </h3>
-        <div className="text-xs text-text-tertiary">
-          Total: {formatCurrency(metrics.currentValue)}
-        </div>
+    <div className="bento-card overflow-hidden">
+      <div className="p-6 border-b border-black/5 bg-white/40 backdrop-blur-md">
+        <h2 className="text-lg font-bold text-text-primary tracking-tight">Current Holdings</h2>
+        <p className="text-[11px] text-text-secondary mt-0.5 font-medium uppercase tracking-widest">Unrealized performance of active holdings</p>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-black/5 text-xs text-text-tertiary bg-white">
-              <th className="px-6 py-3 text-left font-medium">IPO</th>
-              <th className="px-6 py-3 text-left font-medium">Holder</th>
-              <th className="px-6 py-3 text-right font-medium">Qty</th>
-              <th className="px-6 py-3 text-right font-medium">Avg. Cost</th>
-              <th className="px-6 py-3 text-right font-medium">LTP</th>
-              <th className="px-6 py-3 text-right font-medium">Invested</th>
-              <th className="px-6 py-3 text-right font-medium">Current</th>
-              <th className="px-6 py-3 text-right font-medium">P&L</th>
+      <div className="overflow-x-auto bg-white/40 backdrop-blur-md">
+        <table className="w-full text-sm text-left">
+          <thead className="bg-slate-50/50 text-text-secondary uppercase text-[10px] tracking-widest font-bold border-b border-black/5">
+            <tr>
+              <th className="px-6 py-4 font-semibold">IPO Name</th>
+              <th className="px-6 py-4 font-semibold">Holder</th>
+              <th className="px-6 py-4 font-semibold text-right">Shares</th>
+              <th className="px-6 py-4 font-semibold text-right">Avg Cost</th>
+              <th className="px-6 py-4 font-semibold text-right">LTP</th>
+              <th className="px-6 py-4 font-semibold text-right">Current Value</th>
+              <th className="px-6 py-4 font-semibold text-right">Unrealized P&L</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-black/5">
-            {metrics.holdingsTable.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-6 py-8 text-center text-text-tertiary text-sm">
-                  No active holdings.
+            {data.map((row) => (
+              <tr key={row.id} className="table-row-hover group">
+                <td className="px-6 py-4 font-semibold text-text-primary group-hover:text-accent-blue transition-colors duration-300">{row.ipoName}</td>
+                <td className="px-6 py-4 text-text-secondary">{row.holderName}</td>
+                <td className="px-6 py-4 text-right tabular-nums text-text-secondary">{row.qty}</td>
+                <td className="px-6 py-4 text-right tabular-nums text-text-secondary">{formatCurrency(row.avgPrice)}</td>
+                <td className="px-6 py-4 text-right tabular-nums text-text-secondary">{formatCurrency(row.ltp)}</td>
+                <td className="px-6 py-4 text-right tabular-nums font-semibold text-text-primary">{formatCurrency(row.current)}</td>
+                <td className="px-6 py-4 text-right tabular-nums">
+                  <div className={`flex flex-col items-end ${row.pnl > 0 ? 'text-accent-green' : row.pnl < 0 ? 'text-accent-red' : 'text-text-secondary'}`}>
+                    <span className="font-semibold text-[15px]">
+                      {row.pnl > 0 ? '+' : ''}{formatCurrency(row.pnl)}
+                    </span>
+                    <span className="text-xs font-medium opacity-80">
+                      {row.pnlPercent > 0 ? '+' : ''}{row.pnlPercent.toFixed(2)}%
+                    </span>
+                  </div>
                 </td>
               </tr>
-            ) : (
-              metrics.holdingsTable.map(row => (
-                <tr key={row.id} className="hover:bg-bg-secondary/40 transition-colors">
-                  <td className="px-6 py-3 font-medium text-text-primary">{row.ipoName}</td>
-                  <td className="px-6 py-3 text-text-secondary text-xs">{row.holderName}</td>
-                  <td className="px-6 py-3 text-right text-text-secondary">{row.qty}</td>
-                  <td className="px-6 py-3 text-right text-text-secondary">₹{row.avgPrice.toLocaleString('en-IN')}</td>
-                  <td className="px-6 py-3 text-right text-text-secondary">₹{row.ltp.toLocaleString('en-IN')}</td>
-                  <td className="px-6 py-3 text-right font-medium">{formatCurrency(row.invested)}</td>
-                  <td className="px-6 py-3 text-right font-medium">{formatCurrency(row.current)}</td>
-                  <td className="px-6 py-3 text-right">
-                    <div className="flex flex-col items-end">
-                      <span className={`font-semibold ${row.pnl >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
-                        {row.pnl >= 0 ? '+' : ''}{formatCurrency(row.pnl)}
-                      </span>
-                      {row.pnlPercent !== 0 && (
-                        <span className={`text-[10px] font-bold ${row.pnl >= 0 ? 'text-accent-green/80' : 'text-accent-red/80'}`}>
-                          {row.pnl >= 0 ? '+' : ''}{row.pnlPercent.toFixed(1)}%
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
+            ))}
           </tbody>
         </table>
       </div>
-    </Card>
+    </div>
   );
 };

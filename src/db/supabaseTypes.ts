@@ -517,7 +517,7 @@ export interface Database {
       application_status: 'APPLIED' | 'CANCELLED' | 'EXPIRED'
       money_status: 'BLOCKED' | 'PARTIAL' | 'INVESTED' | 'RELEASED'
       allotment_status: 'PENDING' | 'FULL' | 'PARTIAL' | 'NIL'
-      listing_status: 'NOT_LISTED' | 'LISTING_PENDING' | 'LISTED' | 'COMPLETED'
+      listing_status: 'NOT_LISTED' | 'LISTING_PENDING' | 'LISTED'
       transaction_type: 'MONEY_SENT' | 'MONEY_RECEIVED' | 'SELF_TRANSFER' | 'IPO_REFUND' | 'IPO_SELL' | 'IPO_BLOCKED'
       transaction_status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
       holder_type: 'BANK' | 'PERSON'

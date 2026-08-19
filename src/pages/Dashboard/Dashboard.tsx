@@ -1,20 +1,22 @@
 import React, { useState } from 'react';
+import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
 import type { DashboardFilters } from './useDashboardMetrics';
 import { useDashboardMetrics } from './useDashboardMetrics';
-import { mapIpo, mapDematAccount, mapPerson } from '../../lib/mappers';
+import { mapIpo } from '../../lib/mappers';
 
 import { DashboardHeader } from './components/DashboardHeader';
-import { FinancialSummary } from './components/FinancialSummary';
 import { ActionRequired } from './components/ActionRequired';
+import { FinancialSummary } from './components/FinancialSummary';
 import { MoneyFlow } from './components/MoneyFlow';
-import { IPOAnalytics } from './components/IPOAnalytics';
-import { HoldingsOverview } from './components/HoldingsOverview';
-import { PnLAnalytics } from './components/PnLAnalytics';
 import { Distribution } from './components/Distribution';
-import { RecentTransactions } from './components/RecentTransactions';
 import { SmartInsights } from './components/SmartInsights';
+import { ApplicationsByIPO } from './components/ApplicationsByIPO';
+import { BankAccountsOverview } from './components/BankAccountsOverview';
+import { PeopleSettlements } from './components/PeopleSettlements';
+import { HoldingsOverview } from './components/HoldingsOverview';
+import { RecentTransactions } from './components/RecentTransactions';
 
 export const Dashboard: React.FC = () => {
   const [filters, setFilters] = useState<DashboardFilters>({
@@ -31,21 +33,7 @@ export const Dashboard: React.FC = () => {
     }
   });
 
-  const { data: allDemats } = useQuery({
-    queryKey: ['demat-list-dash'],
-    queryFn: async () => {
-      const { data } = await supabase.from('demat_accounts').select('*');
-      return (data || []).map(mapDematAccount);
-    }
-  });
 
-  const { data: allPeople } = useQuery({
-    queryKey: ['people-list-dash'],
-    queryFn: async () => {
-      const { data } = await supabase.from('people').select('*');
-      return (data || []).map(mapPerson);
-    }
-  });
 
   const { data: metrics, isLoading, error, refetch } = useDashboardMetrics(filters);
 
@@ -73,39 +61,83 @@ export const Dashboard: React.FC = () => {
     );
   }
 
+  const containerVariants = {
+    hidden: { opacity: 0 },
+    show: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.1
+      }
+    }
+  };
+
+  const itemVariants = {
+    hidden: { opacity: 0, y: 20 },
+    show: { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 300, damping: 24 } }
+  };
+
   return (
-    <div className="space-y-2 pb-20 max-w-7xl mx-auto px-4 md:px-0">
-      <DashboardHeader 
-        filters={filters} 
-        setFilters={setFilters} 
-        allIpos={allIpos || []} 
-        allDemats={allDemats || []} 
-        allPeople={allPeople || []}
-        onRefresh={() => refetch()} 
-      />
+    <div className="min-h-screen premium-gradient-bg -mx-4 -mt-4 px-4 pt-4 sm:-mx-6 sm:-mt-6 sm:px-6 sm:pt-6">
+      <motion.div 
+        className="space-y-6 pb-20 max-w-7xl mx-auto mt-4"
+        variants={containerVariants}
+        initial="hidden"
+        animate="show"
+      >
+      <motion.div variants={itemVariants}>
+        <DashboardHeader 
+          filters={filters} 
+          setFilters={setFilters} 
+          allIpos={allIpos || []} 
+          onRefresh={() => refetch()} 
+        />
+      </motion.div>
 
-      <ActionRequired metrics={metrics} />
+      <motion.div variants={itemVariants}>
+        <ActionRequired actions={metrics.actionsRequired} />
+      </motion.div>
 
-      <FinancialSummary metrics={metrics} formatCurrency={formatCurrency} />
+      <motion.div variants={itemVariants}>
+        <FinancialSummary metrics={metrics} formatCurrency={formatCurrency} />
+      </motion.div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <MoneyFlow metrics={metrics} formatCurrency={formatCurrency} />
-        </div>
-        <div className="lg:col-span-1">
-          <SmartInsights metrics={metrics} formatCurrency={formatCurrency} />
+        <motion.div variants={itemVariants} className="lg:col-span-2">
+          <MoneyFlow data={metrics.moneyFlowChart} formatCurrency={formatCurrency} />
+        </motion.div>
+        <div className="lg:col-span-1 space-y-6">
+          <motion.div variants={itemVariants}>
+            <Distribution data={metrics.assetDistribution} formatCurrency={formatCurrency} />
+          </motion.div>
+          <motion.div variants={itemVariants}>
+            <SmartInsights insights={metrics.smartInsights} />
+          </motion.div>
         </div>
       </div>
 
-      <IPOAnalytics metrics={metrics} formatCurrency={formatCurrency} />
+      <motion.div variants={itemVariants}>
+        <ApplicationsByIPO data={metrics.applicationsByIPO} formatCurrency={formatCurrency} />
+      </motion.div>
 
-      <HoldingsOverview metrics={metrics} formatCurrency={formatCurrency} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <motion.div variants={itemVariants}>
+          <BankAccountsOverview data={metrics.bankAccounts} formatCurrency={formatCurrency} />
+        </motion.div>
+        <motion.div variants={itemVariants}>
+          <PeopleSettlements data={metrics.peopleSettlements} formatCurrency={formatCurrency} />
+        </motion.div>
+      </div>
 
-      <PnLAnalytics metrics={metrics} formatCurrency={formatCurrency} />
+      {metrics.holdingsTable.length > 0 && (
+        <motion.div variants={itemVariants}>
+          <HoldingsOverview data={metrics.holdingsTable} formatCurrency={formatCurrency} />
+        </motion.div>
+      )}
 
-      <Distribution metrics={metrics} formatCurrency={formatCurrency} />
-
-      <RecentTransactions metrics={metrics} formatCurrency={formatCurrency} />
+      <motion.div variants={itemVariants}>
+        <RecentTransactions data={metrics.recentActivity} formatCurrency={formatCurrency} />
+      </motion.div>
+      </motion.div>
     </div>
   );
 };

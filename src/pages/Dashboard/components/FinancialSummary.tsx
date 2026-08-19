@@ -1,71 +1,46 @@
 import React from 'react';
-import { Card } from '../../../components/ui/Card';
-import { motion } from 'framer-motion';
-import { Wallet, Briefcase, TrendingUp, ShieldAlert, CreditCard } from 'lucide-react';
-import type { DashboardMetrics } from '../useDashboardMetrics';
+import type { CommandCenterMetrics } from '../useDashboardMetrics';
 
-interface Props {
-  metrics: DashboardMetrics;
-  formatCurrency: (v: number) => string;
+interface FinancialSummaryProps {
+  metrics: CommandCenterMetrics;
+  formatCurrency: (val: number) => string;
 }
 
-export const FinancialSummary: React.FC<Props> = ({ metrics, formatCurrency }) => {
+export const FinancialSummary: React.FC<FinancialSummaryProps> = ({ metrics, formatCurrency }) => {
+  const cards = [
+    { label: 'Total value', value: formatCurrency(metrics.totalValue) },
+    { label: 'Bank cash', value: formatCurrency(metrics.bankCash) },
+    { label: 'Ipo blocked', value: formatCurrency(metrics.ipoBlocked) },
+    { label: 'Available', value: formatCurrency(metrics.available) },
+    { label: 'Invested (cost basis)', value: formatCurrency(metrics.invested) },
+    { 
+      label: 'Realized p&l', 
+      value: metrics.realizedPnL === 0 ? "No realized sales yet" : formatCurrency(metrics.realizedPnL),
+      isText: metrics.realizedPnL === 0,
+      color: metrics.realizedPnL > 0 ? 'text-accent-green' : metrics.realizedPnL < 0 ? 'text-accent-red' : ''
+    },
+    { 
+      label: 'Unrealized p&l', 
+      value: metrics.unrealizedPnL === 0 ? "No active holdings" : formatCurrency(metrics.unrealizedPnL),
+      isText: metrics.unrealizedPnL === 0,
+      color: metrics.unrealizedPnL > 0 ? 'text-accent-green' : metrics.unrealizedPnL < 0 ? 'text-accent-red' : ''
+    },
+  ];
+
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.0 }}>
-        <Card className="flex flex-col justify-center relative overflow-hidden bg-white border-black/5 py-4">
-          <div className="absolute -right-3 -top-3 opacity-5 pointer-events-none">
-            <Wallet size={80} />
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4">
+      {cards.map((card, idx) => (
+        <div 
+          key={idx} 
+          className="bento-card p-5 flex flex-col justify-center group overflow-hidden" 
+        >
+          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 via-transparent to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+          <p className="text-[11px] text-text-secondary/80 mb-2 font-bold tracking-widest uppercase relative z-10">{card.label}</p>
+          <div className={`font-extrabold tracking-tight relative z-10 ${card.isText ? 'text-sm text-text-secondary font-medium' : 'text-2xl text-slate-800'} ${card.color || ''}`}>
+            {card.value}
           </div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Total Value</p>
-          <div className="text-xl font-bold text-text-primary">{formatCurrency(metrics.currentValue + metrics.availableUncommitted + metrics.blockedAmount)}</div>
-        </Card>
-      </motion.div>
-
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-        <Card className="flex flex-col justify-center relative overflow-hidden bg-white border-black/5 py-4">
-          <div className="absolute -right-3 -top-3 opacity-5 pointer-events-none">
-            <Briefcase size={80} />
-          </div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Invested</p>
-          <div className="text-xl font-bold text-accent-blue">{formatCurrency(metrics.totalInvested)}</div>
-        </Card>
-      </motion.div>
-
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-        <Card className="flex flex-col justify-center relative overflow-hidden bg-white border-black/5 py-4">
-          <div className="absolute -right-3 -top-3 opacity-5 pointer-events-none">
-            <TrendingUp size={80} />
-          </div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Total P&L</p>
-          <div className={`text-xl font-bold flex items-center gap-1 ${metrics.totalPnL >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
-            {metrics.totalPnL >= 0 ? '+' : ''}{formatCurrency(metrics.totalPnL)}
-            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-black/5 ml-1">
-              {metrics.totalPnL >= 0 ? '+' : ''}{metrics.totalPnLPercentage.toFixed(1)}%
-            </span>
-          </div>
-        </Card>
-      </motion.div>
-
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
-        <Card className="flex flex-col justify-center relative overflow-hidden bg-white border-black/5 py-4">
-          <div className="absolute -right-3 -top-3 opacity-5 pointer-events-none">
-            <ShieldAlert size={80} />
-          </div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">IPO Blocked</p>
-          <div className="text-xl font-bold text-accent-orange">{formatCurrency(metrics.blockedAmount)}</div>
-        </Card>
-      </motion.div>
-
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
-        <Card className="flex flex-col justify-center relative overflow-hidden bg-white border-black/5 py-4">
-          <div className="absolute -right-3 -top-3 opacity-5 pointer-events-none">
-            <CreditCard size={80} />
-          </div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Available</p>
-          <div className="text-xl font-bold text-text-primary">{formatCurrency(metrics.availableUncommitted)}</div>
-        </Card>
-      </motion.div>
+        </div>
+      ))}
     </div>
   );
 };

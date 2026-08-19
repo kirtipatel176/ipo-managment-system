@@ -4,22 +4,36 @@ import { supabase } from '../../lib/supabase';
 import { Card } from '../../components/ui/Card';
 import { Activity, ArrowRightLeft, Landmark, Users } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { Pagination } from '../../components/ui/Pagination';
 import { mapJourneyEvent } from '../../lib/mappers';
+import { format } from 'date-fns';
 
 export const Logs: React.FC = () => {
-  const { data: logs, isLoading } = useQuery({
-    queryKey: ['journey_events'],
+  const [currentPage, setCurrentPage] = React.useState(1);
+  const pageSize = 20;
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['journey_events', currentPage],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const from = (currentPage - 1) * pageSize;
+      const to = from + pageSize - 1;
+
+      const { data, error, count } = await supabase
         .from('journey_events')
-        .select('*')
-        .order('date', { ascending: false })
-        .limit(100);
+        .select('*', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(from, to);
       
       if (error) throw error;
-      return (data || []).map(mapJourneyEvent);
+      return {
+        logs: (data || []).map(mapJourneyEvent),
+        totalItems: count || 0
+      };
     }
   });
+
+  const logs = data?.logs;
+  const totalItems = data?.totalItems || 0;
 
   if (isLoading) {
     return (
@@ -67,7 +81,7 @@ export const Logs: React.FC = () => {
                   <div className="flex items-center justify-between gap-4">
                     <h4 className="text-sm font-semibold text-text-primary">{log.eventType.replace(/_/g, ' ')}</h4>
                     <span className="text-xs text-text-tertiary whitespace-nowrap">
-                      {new Date(log.date).toLocaleString()}
+                      {format(new Date(log.createdAt), 'dd MMM yyyy, hh:mm a')}
                     </span>
                   </div>
                   <p className="text-sm text-text-secondary mt-1">{log.description}</p>
@@ -94,6 +108,12 @@ export const Logs: React.FC = () => {
             ))
           )}
         </div>
+        <Pagination
+          currentPage={currentPage}
+          totalItems={totalItems}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+        />
       </Card>
     </div>
   );
