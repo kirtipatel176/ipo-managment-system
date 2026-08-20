@@ -7,6 +7,7 @@ import { Dashboard } from './pages/Dashboard/Dashboard';
 import { Accounts } from './pages/Accounts/Accounts';
 
 import { People } from './pages/People/People';
+import { PersonDetails } from './pages/People/PersonDetails';
 
 import { IPOMaster } from './pages/IPOMaster/IPOMaster';
 
@@ -50,6 +51,7 @@ function App() {
               <Route path="accounts" element={<Accounts />} />
               <Route path="demat" element={<DematAccounts />} />
               <Route path="people" element={<People />} />
+              <Route path="people/:id" element={<PersonDetails />} />
               <Route path="holdings" element={<Holdings />} />
               <Route path="profit" element={<Profit />} />
               <Route path="health" element={<Health />} />

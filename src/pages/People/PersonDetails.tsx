@@ -1,19 +1,19 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
-import { mapPerson, mapApplication, mapTransaction, mapIpo } from '../../lib/mappers';
-import { Modal } from '../../components/ui/Modal';
+import { mapPerson, mapApplication, mapTransaction, mapIpo, mapDematAccount } from '../../lib/mappers';
 import { Badge } from '../../components/ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/Table';
+import { User, CreditCard, FileText, Hash, ArrowLeft } from 'lucide-react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
 
-interface Props {
-  isOpen: boolean;
-  onClose: () => void;
-  personId: number | null;
-}
-
-export const PersonDetailsModal: React.FC<Props> = ({ isOpen, onClose, personId }) => {
-  const [activeTab, setActiveTab] = useState<'applications' | 'transactions'>('applications');
+export const PersonDetails: React.FC = () => {
+  const { user } = useAuth();
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const personId = id ? parseInt(id, 10) : null;
+  const [activeTab, setActiveTab] = useState<'profile' | 'applications' | 'transactions'>('profile');
 
   const { data, isLoading } = useQuery({
     queryKey: ['personDetails', personId],
@@ -28,6 +28,7 @@ export const PersonDetailsModal: React.FC<Props> = ({ isOpen, onClose, personId 
         { data: allocsData },
         { data: holdingsData },
         { data: salesData },
+        { data: dematsData },
       ] = await Promise.all([
         supabase.from('people').select('*').eq('id', personId).single(),
         supabase.from('applications').select('*').eq('applicant_person_id', personId),
@@ -36,12 +37,14 @@ export const PersonDetailsModal: React.FC<Props> = ({ isOpen, onClose, personId 
         supabase.from('allocations').select('*').eq('current_holder_id', personId).eq('current_holder_type', 'PERSON').eq('status', 'ACTIVE'),
         supabase.from('holdings').select('*').eq('person_id', personId),
         supabase.from('sales').select('*').eq('person_id', personId),
+        supabase.from('demat_accounts').select('*').eq('holder_person_id', personId),
       ]);
 
       const person = personData ? mapPerson(personData) : null;
       const apps = (appsData || []).map(mapApplication);
       const txs = (txsData || []).map(mapTransaction);
       const ipos = (iposData || []).map(mapIpo);
+      const demats = (dematsData || []).map(mapDematAccount);
       const allocs = allocsData || [];
       const holdings = holdingsData || [];
       const sales = salesData || [];
@@ -75,7 +78,7 @@ export const PersonDetailsModal: React.FC<Props> = ({ isOpen, onClose, personId 
       const totalRealizedProfit = sales.reduce((s, s2) => s + (s2.our_profit_share || 0), 0);
 
       return {
-        person, applications: populatedApps, transactions: populatedTxs,
+        person, applications: populatedApps, transactions: populatedTxs, demats,
         totalSent, totalReturned, ipoBlocked, unallocated, invested,
         currentlyHeld, pendingProfit, totalRealizedProfit
       };
@@ -83,14 +86,14 @@ export const PersonDetailsModal: React.FC<Props> = ({ isOpen, onClose, personId 
     enabled: !!personId,
   });
 
-  if (!isOpen || !personId) return null;
+  if (!personId) return null;
   if (isLoading || !data) return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Loading..." className="max-w-4xl">
-      <div className="p-8 text-center text-text-secondary">Loading details...</div>
-    </Modal>
+    <div className="flex h-full w-full items-center justify-center py-20">
+      <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent-blue/20 border-t-accent-blue" />
+    </div>
   );
 
-  const { person, applications, transactions, totalSent, totalReturned, ipoBlocked, currentlyHeld, pendingProfit, totalRealizedProfit } = data;
+  const { person, applications, transactions, demats, totalSent, totalReturned, currentlyHeld, ipoBlocked, pendingProfit, totalRealizedProfit } = data;
   
   const formatCurrency = (val: number) => 
     new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(val);
@@ -98,7 +101,19 @@ export const PersonDetailsModal: React.FC<Props> = ({ isOpen, onClose, personId 
     new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(val);
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`${person?.fullName} - Details`} className="max-w-4xl">
+    <div className="space-y-6 pb-10 max-w-5xl mx-auto">
+      <div className="flex items-center gap-4">
+        <button 
+          onClick={() => navigate('/people')}
+          className="p-2 rounded-xl hover:bg-black/5 transition-colors text-text-secondary hover:text-text-primary"
+        >
+          <ArrowLeft size={20} />
+        </button>
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{person?.fullName}</h1>
+          <p className="mt-1 text-text-secondary">Detailed breakdown of associated accounts and ledger.</p>
+        </div>
+      </div>
       {/* Balance Summary */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mx-4 my-3 p-3 rounded-xl bg-bg-secondary/50 border border-black/5">
         <div className="text-center">
@@ -134,6 +149,12 @@ export const PersonDetailsModal: React.FC<Props> = ({ isOpen, onClose, personId 
 
       <div className="flex border-b border-black/5 mb-4 px-2 pt-2">
         <button 
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'profile' ? 'border-accent-blue text-accent-blue' : 'border-transparent text-text-secondary hover:text-text-primary'}`}
+          onClick={() => setActiveTab('profile')}
+        >
+          Profile
+        </button>
+        <button 
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'applications' ? 'border-accent-blue text-accent-blue' : 'border-transparent text-text-secondary hover:text-text-primary'}`}
           onClick={() => setActiveTab('applications')}
         >
@@ -148,6 +169,66 @@ export const PersonDetailsModal: React.FC<Props> = ({ isOpen, onClose, personId 
       </div>
 
       <div className="max-h-[60vh] overflow-y-auto">
+        {activeTab === 'profile' && (
+          <div className="p-4 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-bg-secondary/30 p-5 rounded-2xl border border-border-color space-y-4">
+                <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
+                  <User size={16} className="text-accent-blue" />
+                  Personal Information
+                </h3>
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-xs text-text-secondary">Full Name</div>
+                    <div className="text-sm font-medium text-text-primary">{person?.fullName}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-text-secondary">PAN Card</div>
+                    <div className="text-sm font-medium text-text-primary flex items-center gap-2">
+                      <CreditCard size={14} className="text-text-tertiary" />
+                      {person?.panNumber || 'Not provided'}
+                    </div>
+                  </div>
+                  {user && person?.notes && (
+                    <div>
+                      <div className="text-xs text-text-secondary">Notes</div>
+                      <div className="text-sm font-medium text-text-primary flex items-start gap-2 mt-1">
+                        <FileText size={14} className="text-text-tertiary mt-0.5 shrink-0" />
+                        <span className="whitespace-pre-wrap">{person.notes}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-bg-secondary/30 p-5 rounded-2xl border border-border-color space-y-4">
+                <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
+                  <Hash size={16} className="text-accent-blue" />
+                  Demat Accounts ({demats.length})
+                </h3>
+                {demats.length === 0 ? (
+                  <div className="text-sm text-text-secondary py-4 text-center">No Demat accounts linked.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {demats.map(demat => (
+                      <div key={demat.id} className="p-3 bg-white/50 rounded-xl border border-black/5 flex items-start justify-between">
+                        <div>
+                          <div className="text-sm font-bold text-text-primary">{demat.brokerName}</div>
+                          <div className="text-xs text-text-secondary font-mono mt-0.5">{demat.dematId || 'No ID'}</div>
+                          {demat.notes && <div className="text-[10px] text-text-tertiary mt-1">{demat.notes}</div>}
+                        </div>
+                        <Badge variant={demat.isActive ? 'success' : 'default'}>
+                          {demat.isActive ? 'Active' : 'Inactive'}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'applications' && (
           <Table>
             <TableHeader>
@@ -236,6 +317,6 @@ export const PersonDetailsModal: React.FC<Props> = ({ isOpen, onClose, personId 
           </Table>
         )}
       </div>
-    </Modal>
+    </div>
   );
 };

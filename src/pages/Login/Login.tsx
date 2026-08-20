@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Navigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Lock, Mail } from 'lucide-react';
@@ -10,6 +10,7 @@ import { useToast } from '../../hooks/useToast';
 export const Login: React.FC = () => {
   const { user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -18,11 +19,32 @@ export const Login: React.FC = () => {
     return <Navigate to="/" replace />;
   }
 
+  const validateForm = () => {
+    if (!email || !password) {
+      toast.error('Please enter both email and password.', 'Validation Error');
+      return false;
+    }
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      toast.error('Please enter a valid email address.', 'Validation Error');
+      return false;
+    }
+
+    if (password.length < 6) {
+      toast.error('Password must be at least 6 characters long.', 'Validation Error');
+      return false;
+    }
+
+    return true;
+  };
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) return;
-    setLoading(true);
     
+    if (!validateForm()) return;
+    
+    setLoading(true);
     try {
       let { error } = await supabase.auth.signInWithPassword({
         email,
@@ -47,6 +69,7 @@ export const Login: React.FC = () => {
         toast.error(error.message, 'Login Failed');
       } else {
         toast.success('Successfully logged in!', 'Welcome Back');
+        navigate('/', { replace: true });
       }
     } catch (err: any) {
       toast.error(err.message, 'Authentication Failed');

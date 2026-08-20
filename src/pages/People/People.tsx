@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Filter, User, Edit2, Trash2 } from 'lucide-react';
+import { Plus, Search, Filter, User, Edit2, Trash2, FileText } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { mapPerson, mapApplication, mapAllocation, mapTransaction } from '../../lib/mappers';
 import { Button } from '../../components/ui/Button';
@@ -11,16 +11,16 @@ import { Badge } from '../../components/ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/Table';
 import { motion } from 'framer-motion';
 import { Pagination } from '../../components/ui/Pagination';
-import { PersonDetailsModal } from './PersonDetailsModal';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { BlurOverlay } from '../../components/ui/BlurOverlay';
 
 export const People: React.FC = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
@@ -28,12 +28,13 @@ export const People: React.FC = () => {
   const [newPerson, setNewPerson] = useState({
     fullName: '',
     panNumber: '',
+    notes: '',
     isSelf: false,
   });
 
   const openAddModal = () => {
     setEditingId(null);
-    setNewPerson({ fullName: '', panNumber: '', isSelf: false });
+    setNewPerson({ fullName: '', panNumber: '', notes: '', isSelf: false });
     setIsModalOpen(true);
   };
 
@@ -42,6 +43,7 @@ export const People: React.FC = () => {
     setNewPerson({
       fullName: person.fullName,
       panNumber: person.panNumber || '',
+      notes: person.notes || '',
       isSelf: person.isSelf || false,
     });
     setIsModalOpen(true);
@@ -113,6 +115,7 @@ export const People: React.FC = () => {
         await supabase.from('people').update({
           full_name: person.fullName,
           pan_number: person.panNumber,
+          notes: person.notes,
           is_self: person.isSelf,
           updated_at: now
         }).eq('id', person.id);
@@ -120,6 +123,7 @@ export const People: React.FC = () => {
         await supabase.from('people').insert({
           full_name: person.fullName,
           pan_number: person.panNumber,
+          notes: person.notes,
           is_self: person.isSelf,
           is_active: true,
           created_at: now,
@@ -131,7 +135,7 @@ export const People: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['peopleList'] });
       setIsModalOpen(false);
       setEditingId(null);
-      setNewPerson({ fullName: '', panNumber: '', isSelf: false });
+      setNewPerson({ fullName: '', panNumber: '', notes: '', isSelf: false });
     }
   });
 
@@ -239,7 +243,7 @@ export const People: React.FC = () => {
                 transition={{ duration: 0.2, delay: i * 0.02 }}
                 key={person.id}
                 className="group border-b border-black/5 transition-colors hover:bg-bg-secondary/50 cursor-pointer"
-                onClick={() => setSelectedPersonId(person.id!)}
+                onClick={() => navigate(`/people/${person.id}`)}
               >
                 <TableCell>
                   <div className="flex items-center gap-3">
@@ -252,6 +256,12 @@ export const People: React.FC = () => {
                         {person.isSelf && <Badge variant="info" className="text-[10px] py-0">Self</Badge>}
                       </div>
                       <div className="text-xs text-text-tertiary mt-0.5">{person.applicationsCount} application{person.applicationsCount !== 1 ? 's' : ''} · {person.dematCount ?? 0} demat</div>
+                      {user && person.notes && (
+                        <div className="text-[10px] text-text-tertiary mt-1 flex items-start gap-1 max-w-[200px] truncate" title={person.notes}>
+                          <FileText size={10} className="mt-0.5 shrink-0" />
+                          <span className="truncate">{person.notes}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </TableCell>
@@ -353,6 +363,15 @@ export const People: React.FC = () => {
               placeholder="ABCDE1234F"
             />
           </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-text-primary">Notes / Comments</label>
+            <textarea
+              value={newPerson.notes}
+              onChange={e => setNewPerson({ ...newPerson, notes: e.target.value })}
+              className="w-full rounded-xl border border-black/10 bg-white/50 px-4 py-2.5 text-sm text-text-primary placeholder-text-tertiary shadow-sm backdrop-blur-sm transition-all focus:border-accent-blue focus:bg-white focus:outline-none focus:ring-1 focus:ring-accent-blue min-h-[80px]"
+              placeholder="e.g. Ledger discrepancy context, technical problem, missing money understanding..."
+            />
+          </div>
           <div className="flex items-center gap-3 p-3 bg-bg-secondary rounded-xl">
             <input
               type="checkbox"
@@ -374,12 +393,6 @@ export const People: React.FC = () => {
           </div>
         </form>
       </Modal>
-
-      <PersonDetailsModal
-        isOpen={selectedPersonId !== null}
-        onClose={() => setSelectedPersonId(null)}
-        personId={selectedPersonId}
-      />
     </div>
   );
 };
